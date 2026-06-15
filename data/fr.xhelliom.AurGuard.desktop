@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=aur-guard
+GenericName=Mises à jour AUR sécurisées
+Comment=Vérifie les mises à jour AUR : délai, whitelist, scan et review IA
+Exec=aur-guard-gui
+Icon=fr.xhelliom.AurGuard
+Terminal=false
+Categories=System;Security;PackageManager;
+Keywords=aur;arch;security;update;pkgbuild;
+StartupNotify=true
