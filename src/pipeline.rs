@@ -40,7 +40,7 @@ pub fn evaluate(cfg: &Config) -> Result<Vec<Outcome>> {
     let names: Vec<String> = updates.iter().map(|u| u.name.clone()).collect();
     let infos = aur::fetch_infos(&names).unwrap_or_default();
     let now = aur::now_secs();
-    let threshold = cfg.delay_days * 86_400;
+    let threshold = cfg.delay_days * aur::SECS_PER_DAY;
 
     let mut outcomes = Vec::new();
     for upd in updates {
@@ -58,7 +58,7 @@ fn evaluate_one(
 ) -> Outcome {
     let whitelisted = cfg.is_whitelisted(&upd.name);
     let info = infos.get(&upd.name);
-    let age_days = info.map(|i| now.saturating_sub(i.last_modified) / 86_400);
+    let age_days = info.map(|i| now.saturating_sub(i.last_modified) / aur::SECS_PER_DAY);
 
     // Paquet de confiance : on vise la DERNIÈRE version, délai ignoré, mais
     // scan + review IA s'appliquent quand même.
@@ -104,15 +104,8 @@ fn evaluate_lag(
     };
 
     // Version dynamique (VCS) : le lag par révision n'a pas de sens.
-    if target.version == "?" {
-        return Outcome {
-            decision: Decision::Delayed(age_days.unwrap_or(0)),
-            scan: ScanResult::Skipped,
-            lag: None,
-            update: upd,
-            age_days,
-            whitelisted: false,
-        };
+    if target.version == aur::DYNAMIC_VERSION {
+        return delayed(upd, age_days);
     }
 
     // Sommes-nous déjà à jour (ou en avance) par rapport à la cible J-N ?
@@ -124,14 +117,15 @@ fn evaluate_lag(
     // version vérolée reste dans l'historique git après correction en place.)
     match aur::reverted_since(&target.pkgbase, &target.commit) {
         Ok(Some(reason)) => {
-            return Outcome {
-                decision: Decision::Blocked(format!("révision annulée depuis — {reason}")),
-                scan: ScanResult::Skipped,
-                lag: Some(target),
-                update: upd,
+            let decision = Decision::Blocked(format!("révision annulée depuis — {reason}"));
+            return outcome(
+                upd,
                 age_days,
-                whitelisted: false,
-            };
+                false,
+                ScanResult::Skipped,
+                Some(target),
+                decision,
+            );
         }
         Ok(None) => {}
         Err(e) => eprintln!("  (revert-check indisponible pour {}: {e})", upd.name),
@@ -139,99 +133,67 @@ fn evaluate_lag(
 
     // Scan statique + review IA sur LA RÉVISION qu'on installera.
     let scan = scan_lagged(&upd.name, &target.pkgbuild, cfg.use_aur_scan);
-    if let ScanResult::Flagged(ref detail) = scan {
-        return Outcome {
-            decision: Decision::Blocked(format!("aur-scan: {detail}")),
-            scan: scan.clone(),
-            lag: Some(target),
-            update: upd,
-            age_days,
-            whitelisted: false,
-        };
-    }
-
-    if cfg.ai.enabled {
-        let diff = aur::diff_against_installed(&upd.name, &target.pkgbuild);
-        if !diff.trim().is_empty() {
-            match ai::review_diff(&cfg.ai, &upd.name, &diff) {
-                Ok(v) if !v.safe => {
-                    return Outcome {
-                        decision: Decision::Blocked(format!("IA [{}]: {}", v.severity, v.summary)),
-                        scan,
-                        lag: Some(target),
-                        update: upd,
-                        age_days,
-                        whitelisted: false,
-                    };
-                }
-                Ok(_) => {}
-                Err(e) => eprintln!("  (review IA indisponible pour {}: {})", upd.name, e),
-            }
-        }
-    }
-
-    Outcome {
-        decision: Decision::Allow,
-        scan,
-        lag: Some(target),
-        update: upd,
-        age_days,
-        whitelisted: false,
-    }
+    let diff = if cfg.ai.enabled {
+        aur::diff_against_installed(&upd.name, &target.pkgbuild)
+    } else {
+        String::new()
+    };
+    let decision = vet(cfg, &upd.name, &scan, &diff);
+    outcome(upd, age_days, false, scan, Some(target), decision)
 }
 
 /// Décision visant la dernière version (whitelist, ou hold après maturation).
 fn decide_latest(cfg: &Config, upd: Update, age_days: Option<u64>, whitelisted: bool) -> Outcome {
     let scan = scan::scan_package(&upd.name, cfg.use_aur_scan);
-    if let ScanResult::Flagged(ref detail) = scan {
-        return Outcome {
-            decision: Decision::Blocked(format!("aur-scan: {detail}")),
-            scan: scan.clone(),
-            lag: None,
-            update: upd,
-            age_days,
-            whitelisted,
-        };
+    let diff = if cfg.ai.enabled {
+        aur::pkgbuild_diff(&upd.name).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let decision = vet(cfg, &upd.name, &scan, &diff);
+    outcome(upd, age_days, whitelisted, scan, None, decision)
+}
+
+/// Étape commune scan statique + review IA. Renvoie la décision finale ;
+/// un scan signalé ou une IA défavorable produisent un blocage motivé.
+fn vet(cfg: &Config, name: &str, scan: &ScanResult, diff: &str) -> Decision {
+    if let ScanResult::Flagged(detail) = scan {
+        return Decision::Blocked(format!("aur-scan: {detail}"));
     }
-    if cfg.ai.enabled {
-        if let Ok(diff) = aur::pkgbuild_diff(&upd.name) {
-            if !diff.trim().is_empty() {
-                match ai::review_diff(&cfg.ai, &upd.name, &diff) {
-                    Ok(v) if !v.safe => {
-                        return Outcome {
-                            decision: Decision::Blocked(format!("IA [{}]: {}", v.severity, v.summary)),
-                            scan,
-                            lag: None,
-                            update: upd,
-                            age_days,
-                            whitelisted,
-                        };
-                    }
-                    Ok(_) => {}
-                    Err(e) => eprintln!("  (review IA indisponible pour {}: {})", upd.name, e),
-                }
+    if cfg.ai.enabled && !diff.trim().is_empty() {
+        match ai::review_diff(&cfg.ai, name, diff) {
+            Ok(v) if !v.safe => {
+                return Decision::Blocked(format!("IA [{}]: {}", v.severity, v.summary));
             }
+            Ok(_) => {}
+            Err(e) => eprintln!("  (review IA indisponible pour {name}: {e})"),
         }
     }
+    Decision::Allow
+}
+
+/// Construit un `Outcome` (évite la répétition du littéral de struct).
+fn outcome(
+    update: Update,
+    age_days: Option<u64>,
+    whitelisted: bool,
+    scan: ScanResult,
+    lag: Option<LagTarget>,
+    decision: Decision,
+) -> Outcome {
     Outcome {
-        decision: Decision::Allow,
-        scan,
-        lag: None,
-        update: upd,
+        update,
         age_days,
         whitelisted,
+        scan,
+        decision,
+        lag,
     }
 }
 
 fn delayed(upd: Update, age_days: Option<u64>) -> Outcome {
-    Outcome {
-        decision: Decision::Delayed(age_days.unwrap_or(0)),
-        scan: ScanResult::Skipped,
-        lag: None,
-        update: upd,
-        age_days,
-        whitelisted: false,
-    }
+    let decision = Decision::Delayed(age_days.unwrap_or(0));
+    outcome(upd, age_days, false, ScanResult::Skipped, None, decision)
 }
 
 /// Scan statique d'une révision lag : on écrit le PKGBUILD dans un fichier

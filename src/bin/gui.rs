@@ -89,7 +89,11 @@ fn build_ui(app: &adw::Application) {
         .title("Mode du délai")
         .subtitle("Lag : installe la révision d'il y a N jours · Hold : bloque les maj récentes")
         .model(&StringList::new(&["Lag (différé)", "Hold (blocage)"]))
-        .selected(if cfg.borrow().delay_mode == DelayMode::Hold { 1 } else { 0 })
+        .selected(if cfg.borrow().delay_mode == DelayMode::Hold {
+            1
+        } else {
+            0
+        })
         .build();
 
     let helper_row = adw::ComboRow::builder()
@@ -130,7 +134,10 @@ fn build_ui(app: &adw::Application) {
 
     let wl_expander = adw::ExpanderRow::builder()
         .title("Whitelist")
-        .subtitle(format!("{} paquets de confiance", cfg.borrow().whitelist.len()))
+        .subtitle(format!(
+            "{} paquets de confiance",
+            cfg.borrow().whitelist.len()
+        ))
         .build();
 
     let wl_add = adw::EntryRow::builder()
@@ -231,8 +238,16 @@ fn build_ui(app: &adw::Application) {
             {
                 let mut c = cfg.borrow_mut();
                 c.delay_days = delay_row.value() as u64;
-                c.delay_mode = if mode_row.selected() == 1 { DelayMode::Hold } else { DelayMode::Lag };
-                c.helper = if helper_row.selected() == 1 { "paru".into() } else { "yay".into() };
+                c.delay_mode = if mode_row.selected() == 1 {
+                    DelayMode::Hold
+                } else {
+                    DelayMode::Lag
+                };
+                c.helper = if helper_row.selected() == 1 {
+                    "paru".into()
+                } else {
+                    "yay".into()
+                };
                 c.use_aur_scan = scan_row.is_active();
                 c.ai.enabled = ai_row.is_active();
                 c.ai.provider = provider_from_index(provider_row.selected());
@@ -313,7 +328,11 @@ fn build_ui(app: &adw::Application) {
 }
 
 /// Crée une ligne de paquet whitelisté avec un bouton de suppression.
-fn make_pkg_row(name: &str, cfg: &Rc<RefCell<Config>>, expander: &adw::ExpanderRow) -> adw::ActionRow {
+fn make_pkg_row(
+    name: &str,
+    cfg: &Rc<RefCell<Config>>,
+    expander: &adw::ExpanderRow,
+) -> adw::ActionRow {
     let row = adw::ActionRow::builder().title(name).build();
     let btn = gtk::Button::builder()
         .icon_name("user-trash-symbolic")
@@ -335,7 +354,10 @@ fn make_pkg_row(name: &str, cfg: &Rc<RefCell<Config>>, expander: &adw::ExpanderR
 }
 
 fn update_wl_subtitle(expander: &adw::ExpanderRow, cfg: &Rc<RefCell<Config>>) {
-    expander.set_subtitle(&format!("{} paquets de confiance", cfg.borrow().whitelist.len()));
+    expander.set_subtitle(&format!(
+        "{} paquets de confiance",
+        cfg.borrow().whitelist.len()
+    ));
 }
 
 fn clear_listbox(list: &gtk::ListBox) {
@@ -351,7 +373,11 @@ fn info_row(text: &str) -> adw::ActionRow {
 fn outcome_row(o: &Outcome) -> adw::ActionRow {
     let (icon, label) = match &o.decision {
         Decision::Allow => {
-            let s = if o.whitelisted { "Autorisé (whitelist)" } else { "Autorisé" };
+            let s = if o.whitelisted {
+                "Autorisé (whitelist)"
+            } else {
+                "Autorisé"
+            };
             ("emblem-ok-symbolic", s.to_string())
         }
         Decision::Delayed(d) => (

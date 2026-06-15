@@ -6,6 +6,13 @@ use crate::config::{AiConfig, Provider};
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
 
+/// Température nulle : on veut le verdict le plus déterministe possible.
+const TEMPERATURE: f32 = 0.0;
+/// Plafond de tokens pour la réponse (le verdict JSON est court).
+const MAX_TOKENS: u32 = 512;
+/// Version de l'API Messages d'Anthropic.
+const ANTHROPIC_VERSION: &str = "2023-06-01";
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Verdict {
     /// true si le diff paraît sûr.
@@ -16,7 +23,8 @@ pub struct Verdict {
     pub summary: String,
 }
 
-const SYSTEM_PROMPT: &str = "Tu es un auditeur de sécurité spécialisé dans les PKGBUILD Arch Linux et l'AUR. \
+const SYSTEM_PROMPT: &str =
+    "Tu es un auditeur de sécurité spécialisé dans les PKGBUILD Arch Linux et l'AUR. \
 On te donne le diff (ou le contenu) d'un PKGBUILD et de ses scripts. Ton rôle est de \
 détecter une COMPROMISSION de la supply chain, pas de critiquer le style de packaging. \
 \
@@ -92,8 +100,12 @@ pub fn review_diff(cfg: &AiConfig, pkg: &str, diff: &str) -> Result<Verdict> {
 /// Un seul appel au modèle, renvoyant un Verdict.
 fn review_once(cfg: &AiConfig, pkg: &str, diff: &str) -> Result<Verdict> {
     let key_env = cfg.key_env_or_default();
-    let api_key = std::env::var(&key_env)
-        .map_err(|_| anyhow!("variable d'environnement {key_env} absente (clé API {:?})", cfg.provider))?;
+    let api_key = std::env::var(&key_env).map_err(|_| {
+        anyhow!(
+            "variable d'environnement {key_env} absente (clé API {:?})",
+            cfg.provider
+        )
+    })?;
     let model = cfg.model_or_default();
 
     let user_msg = format!(
@@ -107,8 +119,7 @@ fn review_once(cfg: &AiConfig, pkg: &str, diff: &str) -> Result<Verdict> {
         }
     };
 
-    parse_verdict(&raw)
-        .with_context(|| format!("réponse IA non exploitable : {raw}"))
+    parse_verdict(&raw).with_context(|| format!("réponse IA non exploitable : {raw}"))
 }
 
 /// Format chat-completions (Groq et OpenAI partagent le même schéma).
@@ -120,7 +131,7 @@ fn call_openai_compatible(
 ) -> Result<String> {
     let body = serde_json::json!({
         "model": model,
-        "temperature": 0,
+        "temperature": TEMPERATURE,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_msg}
@@ -143,8 +154,8 @@ fn call_openai_compatible(
 fn call_anthropic(api_key: &str, model: &str, user_msg: &str) -> Result<String> {
     let body = serde_json::json!({
         "model": model,
-        "max_tokens": 512,
-        "temperature": 0,
+        "max_tokens": MAX_TOKENS,
+        "temperature": TEMPERATURE,
         "system": SYSTEM_PROMPT,
         "messages": [
             {"role": "user", "content": user_msg}
@@ -152,7 +163,7 @@ fn call_anthropic(api_key: &str, model: &str, user_msg: &str) -> Result<String> 
     });
     let resp: serde_json::Value = ureq::post(Provider::Anthropic.endpoint())
         .set("x-api-key", api_key)
-        .set("anthropic-version", "2023-06-01")
+        .set("anthropic-version", ANTHROPIC_VERSION)
         .set("Content-Type", "application/json")
         .send_json(body)
         .context("appel API Anthropic")?

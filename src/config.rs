@@ -189,8 +189,8 @@ impl Config {
         }
         let text = std::fs::read_to_string(&path)
             .with_context(|| format!("lecture de {}", path.display()))?;
-        let cfg: Config = toml::from_str(&text)
-            .with_context(|| format!("parsing TOML de {}", path.display()))?;
+        let cfg: Config =
+            toml::from_str(&text).with_context(|| format!("parsing TOML de {}", path.display()))?;
         Ok(cfg)
     }
 
@@ -200,8 +200,7 @@ impl Config {
             std::fs::create_dir_all(parent)?;
         }
         let text = toml::to_string_pretty(self)?;
-        std::fs::write(&path, text)
-            .with_context(|| format!("écriture de {}", path.display()))?;
+        std::fs::write(&path, text).with_context(|| format!("écriture de {}", path.display()))?;
         Ok(())
     }
 

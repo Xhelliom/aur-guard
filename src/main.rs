@@ -4,10 +4,14 @@
 //! scan statique (aur-scan) -> review IA du diff PKGBUILD.
 
 use anyhow::Result;
+use aur_guard::aur::SECS_PER_DAY;
 use aur_guard::pipeline::{Decision, Outcome};
 use aur_guard::{ai, aur, config, pipeline, scan};
 use clap::{Parser, Subcommand};
 use std::process::Command;
+
+/// Longueur d'un hash de commit abrégé à l'affichage.
+const SHORT_HASH_LEN: usize = 7;
 
 #[derive(Parser)]
 #[command(
@@ -86,8 +90,8 @@ fn run() -> Result<()> {
 
 fn cmd_review_file(path: &str) -> Result<()> {
     let cfg = config::Config::load_or_init()?;
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| anyhow::anyhow!("lecture de {path}: {e}"))?;
+    let content =
+        std::fs::read_to_string(path).map_err(|e| anyhow::anyhow!("lecture de {path}: {e}"))?;
     println!(
         "Review IA de {path} (provider {:?}, jusqu'à {} votes de confirmation)\n",
         cfg.ai.provider, cfg.ai.confirm_votes
@@ -137,7 +141,7 @@ fn cmd_apply(dry_run: bool) -> Result<()> {
                 o.update.name,
                 t.version,
                 cfg.delay_days,
-                &t.commit[..t.commit.len().min(7)]
+                &t.commit[..t.commit.len().min(SHORT_HASH_LEN)]
             );
         }
         if !latest.is_empty() {
@@ -148,7 +152,10 @@ fn cmd_apply(dry_run: bool) -> Result<()> {
 
     for o in &lag {
         let t = o.lag.as_ref().unwrap();
-        println!("→ build de {} {} (révision J-{})", o.update.name, t.version, cfg.delay_days);
+        println!(
+            "→ build de {} {} (révision J-{})",
+            o.update.name, t.version, cfg.delay_days
+        );
         match aur::install_lagged(t) {
             Ok(true) => {}
             Ok(false) => eprintln!("  échec makepkg pour {}", o.update.name),
@@ -178,18 +185,33 @@ fn cmd_status() -> Result<()> {
     let names: Vec<String> = pkgs_raw.lines().map(|l| l.trim().to_string()).collect();
     let last_mod = aur::last_modified(&names)?;
     let now = aur::now_secs();
-    let threshold = cfg.delay_days * 86_400;
+    let threshold = cfg.delay_days * SECS_PER_DAY;
 
-    println!("Âge des {} paquets AUR installés (délai = {}j) :", names.len(), cfg.delay_days);
+    println!(
+        "Âge des {} paquets AUR installés (délai = {}j) :",
+        names.len(),
+        cfg.delay_days
+    );
     let mut rows: Vec<(String, Option<u64>)> = names
         .iter()
-        .map(|n| (n.clone(), last_mod.get(n).map(|lm| now.saturating_sub(*lm) / 86_400)))
+        .map(|n| {
+            (
+                n.clone(),
+                last_mod
+                    .get(n)
+                    .map(|lm| now.saturating_sub(*lm) / SECS_PER_DAY),
+            )
+        })
         .collect();
     rows.sort_by(|a, b| a.0.cmp(&b.0));
     for (name, age) in rows {
         match age {
             Some(d) => {
-                let flag = if d * 86_400 < threshold { "⏳" } else { "  " };
+                let flag = if d * SECS_PER_DAY < threshold {
+                    "⏳"
+                } else {
+                    "  "
+                };
                 println!("  {flag} {name:<34} {d:>4}j");
             }
             None => println!("     {name:<34}    ?"),
@@ -201,12 +223,22 @@ fn cmd_status() -> Result<()> {
 fn cmd_config() -> Result<()> {
     let cfg = config::Config::load_or_init()?;
     println!("Config : {}", config::Config::path()?.display());
-    println!("  délai           : {} jours ({:?})", cfg.delay_days, cfg.delay_mode);
+    println!(
+        "  délai           : {} jours ({:?})",
+        cfg.delay_days, cfg.delay_mode
+    );
     println!("  helper          : {}", cfg.helper);
     println!("  aur-scan         : {}", cfg.use_aur_scan);
-    println!("  review IA        : {} (provider: {:?}, modèle: {})",
-        cfg.ai.enabled, cfg.ai.provider, cfg.ai.model_or_default());
-    println!("  votes confirm.   : {} (déclenchés seulement sur blocage)", cfg.ai.confirm_votes);
+    println!(
+        "  review IA        : {} (provider: {:?}, modèle: {})",
+        cfg.ai.enabled,
+        cfg.ai.provider,
+        cfg.ai.model_or_default()
+    );
+    println!(
+        "  votes confirm.   : {} (déclenchés seulement sur blocage)",
+        cfg.ai.confirm_votes
+    );
     println!("  whitelist        : {} paquets", cfg.whitelist.len());
     Ok(())
 }
@@ -252,7 +284,11 @@ fn print_report(cfg: &config::Config, outcomes: &[Outcome]) {
         "Mises à jour AUR : {} (délai {}j, review IA {})\n",
         outcomes.len(),
         cfg.delay_days,
-        if cfg.ai.enabled { "activée" } else { "désactivée" }
+        if cfg.ai.enabled {
+            "activée"
+        } else {
+            "désactivée"
+        }
     );
     let (mut allow, mut delay, mut block) = (0, 0, 0);
     for o in outcomes {
@@ -260,8 +296,16 @@ fn print_report(cfg: &config::Config, outcomes: &[Outcome]) {
             Decision::Allow => {
                 allow += 1;
                 let scanned = matches!(o.scan, scan::ScanResult::Clean);
-                let base = if o.whitelisted { "✅ (whitelist)" } else { "✅" };
-                if scanned { format!("{base} [scan ok]") } else { base.to_string() }
+                let base = if o.whitelisted {
+                    "✅ (whitelist)"
+                } else {
+                    "✅"
+                };
+                if scanned {
+                    format!("{base} [scan ok]")
+                } else {
+                    base.to_string()
+                }
             }
             Decision::Delayed(d) => {
                 delay += 1;
@@ -274,11 +318,17 @@ fn print_report(cfg: &config::Config, outcomes: &[Outcome]) {
         };
         let ver = match &o.lag {
             // Mode lag : on montre la version cible (révision J-N), pas la dernière.
-            Some(t) if !o.update.old_ver.is_empty() => format!("{} → {} (J-{})", o.update.old_ver, t.version, cfg.delay_days),
+            Some(t) if !o.update.old_ver.is_empty() => format!(
+                "{} → {} (J-{})",
+                o.update.old_ver, t.version, cfg.delay_days
+            ),
             Some(t) => format!("→ {} (J-{})", t.version, cfg.delay_days),
             None => match (o.update.old_ver.is_empty(), o.update.new_ver.is_empty()) {
                 (false, false) => format!("{} → {}", o.update.old_ver, o.update.new_ver),
-                _ => o.age_days.map(|d| format!("modifié il y a {d}j")).unwrap_or_default(),
+                _ => o
+                    .age_days
+                    .map(|d| format!("modifié il y a {d}j"))
+                    .unwrap_or_default(),
             },
         };
         println!("  {:<28} {:<26} {tag}", o.update.name, ver);

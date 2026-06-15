@@ -44,7 +44,9 @@ impl App {
             screen: Screen::Main,
             wl_sel: 0,
             input: None,
-            status: "↑/↓ naviguer · ←/→ ou Espace modifier · Entrée: whitelist · s sauver · q quitter".into(),
+            status:
+                "↑/↓ naviguer · ←/→ ou Espace modifier · Entrée: whitelist · s sauver · q quitter"
+                    .into(),
             dirty: false,
         }
     }
@@ -56,7 +58,11 @@ impl App {
                 self.cfg.delay_days = v.clamp(0, 365) as u64;
             }
             1 => {
-                self.cfg.helper = if self.cfg.helper == "yay" { "paru".into() } else { "yay".into() };
+                self.cfg.helper = if self.cfg.helper == "yay" {
+                    "paru".into()
+                } else {
+                    "yay".into()
+                };
             }
             2 => self.cfg.use_aur_scan = !self.cfg.use_aur_scan,
             3 => self.cfg.ai.enabled = !self.cfg.ai.enabled,
@@ -81,19 +87,35 @@ impl App {
 
     fn rows(&self) -> Vec<(String, String)> {
         vec![
-            ("Délai de sécurité".into(), format!("{} jours", self.cfg.delay_days)),
+            (
+                "Délai de sécurité".into(),
+                format!("{} jours", self.cfg.delay_days),
+            ),
             ("Helper AUR".into(), self.cfg.helper.clone()),
-            ("Scan statique (aur-scan)".into(), onoff(self.cfg.use_aur_scan)),
+            (
+                "Scan statique (aur-scan)".into(),
+                onoff(self.cfg.use_aur_scan),
+            ),
             ("Review IA".into(), onoff(self.cfg.ai.enabled)),
             ("Provider IA".into(), format!("{:?}", self.cfg.ai.provider)),
-            ("Votes de confirmation".into(), self.cfg.ai.confirm_votes.to_string()),
-            ("Whitelist".into(), format!("{} paquets ▸", self.cfg.whitelist.len())),
+            (
+                "Votes de confirmation".into(),
+                self.cfg.ai.confirm_votes.to_string(),
+            ),
+            (
+                "Whitelist".into(),
+                format!("{} paquets ▸", self.cfg.whitelist.len()),
+            ),
         ]
     }
 }
 
 fn onoff(b: bool) -> String {
-    if b { "✅ activé".into() } else { "⬜ désactivé".into() }
+    if b {
+        "✅ activé".into()
+    } else {
+        "⬜ désactivé".into()
+    }
 }
 
 /// Lance la TUI de configuration.
@@ -113,7 +135,10 @@ pub fn run(cfg: Config) -> Result<()> {
     res
 }
 
-fn event_loop<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<()> {
+fn event_loop<B: ratatui::backend::Backend>(
+    terminal: &mut Terminal<B>,
+    app: &mut App,
+) -> Result<()> {
     loop {
         terminal.draw(|f| ui(f, app))?;
         if let Event::Key(key) = event::read()? {
@@ -138,7 +163,8 @@ fn main_keys(app: &mut App, code: KeyCode) -> bool {
     match code {
         KeyCode::Char('q') | KeyCode::Esc => {
             if app.dirty {
-                app.status = "Modifs non sauvées — 's' pour sauver, 'Q' pour quitter sans sauver".into();
+                app.status =
+                    "Modifs non sauvées — 's' pour sauver, 'Q' pour quitter sans sauver".into();
             } else {
                 return true;
             }
@@ -226,7 +252,11 @@ fn whitelist_keys(app: &mut App, code: KeyCode) {
 fn ui(f: &mut ratatui::Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(8), Constraint::Length(3)])
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(8),
+            Constraint::Length(3),
+        ])
         .split(f.area());
 
     let header = match app.screen {
@@ -278,13 +308,20 @@ fn render_whitelist(f: &mut ratatui::Frame, app: &App, area: ratatui::layout::Re
         .iter()
         .enumerate()
         .map(|(i, pkg)| {
-            let marker = if i == app.wl_sel && app.input.is_none() { "▶ " } else { "  " };
+            let marker = if i == app.wl_sel && app.input.is_none() {
+                "▶ "
+            } else {
+                "  "
+            };
             let style = if i == app.wl_sel && app.input.is_none() {
                 Style::default().fg(Color::Black).bg(Color::Cyan)
             } else {
                 Style::default()
             };
-            ListItem::new(Line::from(vec![Span::raw(marker), Span::styled(pkg.clone(), style)]))
+            ListItem::new(Line::from(vec![
+                Span::raw(marker),
+                Span::styled(pkg.clone(), style),
+            ]))
         })
         .collect();
 
