@@ -116,19 +116,25 @@ fn build_ui(app: &adw::Application) {
         .hscrollbar_policy(gtk::PolicyType::Never)
         .child(&page)
         .build();
+    toolbar.set_content(Some(&scroller));
+
+    // Pile de navigation : « mises à jour » à la racine ; les réglages sont
+    // poussés comme une page plein écran (et non un dialogue flottant).
+    let updates_page = adw::NavigationPage::new(&toolbar, "aur-guard");
+    let nav = adw::NavigationView::new();
+    nav.add(&updates_page);
 
     let overlay = adw::ToastOverlay::new();
-    overlay.set_child(Some(&scroller));
-    toolbar.set_content(Some(&overlay));
-    window.set_content(Some(&toolbar));
+    overlay.set_child(Some(&nav));
+    window.set_content(Some(&overlay));
 
-    // Bouton engrenage -> dialogue de paramètres.
+    // Bouton engrenage -> page de paramètres plein écran.
     {
         let cfg = cfg.clone();
-        let window = window.clone();
+        let nav = nav.clone();
         let overlay = overlay.clone();
         settings_btn.connect_clicked(move |_| {
-            open_settings(&window, &cfg, &overlay);
+            nav.push(&build_settings_page(&cfg, &overlay));
         });
     }
 
@@ -203,13 +209,10 @@ fn wire_apply(apply_btn: &gtk::Button, overlay: &adw::ToastOverlay) {
 // Dialogue de PARAMÈTRES
 // =====================================================================
 
-fn open_settings(
-    window: &adw::ApplicationWindow,
+fn build_settings_page(
     cfg: &Rc<RefCell<Config>>,
     overlay: &adw::ToastOverlay,
-) {
-    let dialog = adw::PreferencesDialog::new();
-    dialog.set_title("Paramètres");
+) -> adw::NavigationPage {
     let page = adw::PreferencesPage::new();
 
     // --- Groupe Général ---
@@ -296,14 +299,19 @@ fn open_settings(
     page.add(&general);
     page.add(&ai);
     page.add(&wl);
-    dialog.add(&page);
 
-    // Sauvegarde à la fermeture du dialogue.
+    let header = adw::HeaderBar::new();
+    let toolbar = adw::ToolbarView::new();
+    toolbar.add_top_bar(&header);
+    toolbar.set_content(Some(&page));
+    let nav_page = adw::NavigationPage::new(&toolbar, "Paramètres");
+
+    // Sauvegarde quand on quitte la page de réglages (retour à l'accueil).
     {
         let cfg = cfg.clone();
         let overlay = overlay.clone();
         let provider_row = provider_row.clone();
-        dialog.connect_closed(move |_| {
+        nav_page.connect_hidden(move |_| {
             let provider = provider_from_index(provider_row.selected());
             {
                 let mut c = cfg.borrow_mut();
@@ -344,7 +352,7 @@ fn open_settings(
         });
     }
 
-    dialog.present(Some(window));
+    nav_page
 }
 
 /// Met le libellé de la ligne de clé API à jour selon le provider, en indiquant

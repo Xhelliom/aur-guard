@@ -212,20 +212,20 @@ fn scan_lagged(name: &str, pkgbuild: &str, enabled: bool) -> ScanResult {
 }
 
 /// Compare deux versions via l'outil `vercmp` de pacman.
-/// Renvoie >0 si a est plus récent que b, 0 si égal, <0 sinon.
+/// Renvoie >0 si `a` est strictement plus récent que `b`, 0 si égal, <0 sinon.
+///
+/// Fail-closed : si `vercmp` est indisponible ou sa sortie illisible, on renvoie
+/// une valeur négative. Le mode lag ne considère donc jamais la cible comme plus
+/// récente faute de comparaison fiable → pas d'installation, donc aucun risque
+/// de rétrograder un paquet.
 fn vercmp(a: &str, b: &str) -> i32 {
     match Command::new("vercmp").args([a, b]).output() {
-        Ok(out) => String::from_utf8_lossy(&out.stdout)
-            .trim()
-            .parse()
-            .unwrap_or(0),
-        Err(_) => {
-            // Pas de vercmp : on retombe sur une égalité stricte de chaînes.
-            if a == b {
-                0
-            } else {
-                1
-            }
+        Ok(out) if out.status.success() => {
+            String::from_utf8_lossy(&out.stdout).trim().parse().unwrap_or(-1)
+        }
+        _ => {
+            eprintln!("  (vercmp indisponible : comparaison de versions impossible, mise à jour ignorée)");
+            -1
         }
     }
 }

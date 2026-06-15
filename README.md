@@ -87,7 +87,7 @@ renseigner depuis les interfaces (GUI/TUI).
 ## Interfaces de paramétrage
 
 La GUI met les **mises à jour en page d'accueil** et regroupe les réglages dans
-un dialogue séparé (bouton engrenage) : délai/mode/helper/scan, review IA
+une **page plein écran** séparée (bouton engrenage → navigation) : délai/mode/helper/scan, review IA
 (provider, **modèle**, **clé API**, votes) et **whitelist** (édition + suggestions
 des paquets AUR installés). La TUI (`aur-guard config-ui`) offre les mêmes
 réglages au clavier.
