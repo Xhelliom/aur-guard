@@ -10,7 +10,7 @@ use gtk4::{glib, Adjustment, Orientation, StringList};
 use libadwaita as adw;
 use libadwaita::prelude::*;
 
-use aur_guard::config::{Config, Provider};
+use aur_guard::config::{Config, DelayMode, Provider};
 use aur_guard::pipeline::{self, Decision, Outcome};
 
 const APP_ID: &str = "fr.xhelliom.AurGuard";
@@ -85,6 +85,13 @@ fn build_ui(app: &adw::Application) {
         ))
         .build();
 
+    let mode_row = adw::ComboRow::builder()
+        .title("Mode du délai")
+        .subtitle("Lag : installe la révision d'il y a N jours · Hold : bloque les maj récentes")
+        .model(&StringList::new(&["Lag (différé)", "Hold (blocage)"]))
+        .selected(if cfg.borrow().delay_mode == DelayMode::Hold { 1 } else { 0 })
+        .build();
+
     let helper_row = adw::ComboRow::builder()
         .title("Helper AUR")
         .model(&StringList::new(&["yay", "paru"]))
@@ -155,6 +162,7 @@ fn build_ui(app: &adw::Application) {
     }
 
     settings.add(&delay_row);
+    settings.add(&mode_row);
     settings.add(&helper_row);
     settings.add(&scan_row);
     settings.add(&ai_row);
@@ -212,6 +220,7 @@ fn build_ui(app: &adw::Application) {
     {
         let cfg = cfg.clone();
         let delay_row = delay_row.clone();
+        let mode_row = mode_row.clone();
         let helper_row = helper_row.clone();
         let scan_row = scan_row.clone();
         let ai_row = ai_row.clone();
@@ -222,6 +231,7 @@ fn build_ui(app: &adw::Application) {
             {
                 let mut c = cfg.borrow_mut();
                 c.delay_days = delay_row.value() as u64;
+                c.delay_mode = if mode_row.selected() == 1 { DelayMode::Hold } else { DelayMode::Lag };
                 c.helper = if helper_row.selected() == 1 { "paru".into() } else { "yay".into() };
                 c.use_aur_scan = scan_row.is_active();
                 c.ai.enabled = ai_row.is_active();
@@ -287,36 +297,15 @@ fn build_ui(app: &adw::Application) {
     }
 
     // ---------------------------------------------------------------
-    // Apply (installe les paquets sûrs via le helper, dans un terminal)
+    // Apply : lance `aur-guard apply` dans un terminal. La CLI gère toute la
+    // logique (mode lag = build via makepkg, sinon helper -S) et l'interaction
+    // sudo.
     // ---------------------------------------------------------------
     {
-        let cfg = cfg.clone();
         let overlay = overlay.clone();
         apply_btn.connect_clicked(move |_| {
-            let snapshot = cfg.borrow().clone();
-            let helper = cfg.borrow().helper.clone();
-            let (tx, rx) = async_channel::bounded::<Result<Vec<String>, String>>(1);
-            std::thread::spawn(move || {
-                let res = pipeline::evaluate(&snapshot)
-                    .map(|o| pipeline::allowed_names(&o))
-                    .map_err(|e| e.to_string());
-                let _ = tx.send_blocking(res);
-            });
-            let overlay = overlay.clone();
-            glib::spawn_future_local(async move {
-                if let Ok(Ok(names)) = rx.recv().await {
-                    if names.is_empty() {
-                        overlay.add_toast(adw::Toast::new("Rien à installer"));
-                        return;
-                    }
-                    let cmd = format!("{} -S {}", helper, names.join(" "));
-                    let _ = launch_in_terminal(&cmd);
-                    overlay.add_toast(adw::Toast::new(&format!(
-                        "Installation lancée : {}",
-                        names.join(", ")
-                    )));
-                }
-            });
+            let _ = launch_in_terminal("aur-guard apply");
+            overlay.add_toast(adw::Toast::new("Installation lancée dans un terminal"));
         });
     }
 
@@ -371,9 +360,15 @@ fn outcome_row(o: &Outcome) -> adw::ActionRow {
         ),
         Decision::Blocked(reason) => ("dialog-warning-symbolic", format!("BLOQUÉ — {reason}")),
     };
-    let subtitle = match (o.update.old_ver.is_empty(), o.update.new_ver.is_empty()) {
-        (false, false) => format!("{}  ({} → {})", label, o.update.old_ver, o.update.new_ver),
-        _ => label,
+    let subtitle = match &o.lag {
+        Some(t) if !o.update.old_ver.is_empty() => {
+            format!("{}  ({} → {} J-N)", label, o.update.old_ver, t.version)
+        }
+        Some(t) => format!("{}  (→ {} J-N)", label, t.version),
+        None => match (o.update.old_ver.is_empty(), o.update.new_ver.is_empty()) {
+            (false, false) => format!("{}  ({} → {})", label, o.update.old_ver, o.update.new_ver),
+            _ => label,
+        },
     };
     let row = adw::ActionRow::builder()
         .title(&o.update.name)

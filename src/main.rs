@@ -97,24 +97,55 @@ fn cmd_apply(dry_run: bool) -> Result<()> {
     let outcomes = pipeline::evaluate(&cfg)?;
     print_report(&cfg, &outcomes);
 
-    let allowed = pipeline::allowed_names(&outcomes);
-    if allowed.is_empty() {
+    let allow: Vec<&Outcome> = outcomes
+        .iter()
+        .filter(|o| o.decision == Decision::Allow)
+        .collect();
+    if allow.is_empty() {
         println!("\nRien à installer.");
         return Ok(());
     }
 
-    println!("\nÀ installer : {}", allowed.join(", "));
+    // Sépare les révisions lag (build local via makepkg) des dernières
+    // versions (whitelist/hold, installées par le helper).
+    let lag: Vec<&Outcome> = allow.iter().copied().filter(|o| o.lag.is_some()).collect();
+    let latest: Vec<String> = allow
+        .iter()
+        .filter(|o| o.lag.is_none())
+        .map(|o| o.update.name.clone())
+        .collect();
+
     if dry_run {
-        println!("(dry-run) commande : {} -S {}", cfg.helper, allowed.join(" "));
+        for o in &lag {
+            let t = o.lag.as_ref().unwrap();
+            println!(
+                "(dry-run) build {} {} (révision J-{}, commit {})",
+                o.update.name,
+                t.version,
+                cfg.delay_days,
+                &t.commit[..t.commit.len().min(7)]
+            );
+        }
+        if !latest.is_empty() {
+            println!("(dry-run) {} -S {}", cfg.helper, latest.join(" "));
+        }
         return Ok(());
     }
 
-    let status = Command::new(&cfg.helper)
-        .arg("-S")
-        .args(&allowed)
-        .status()?;
-    if !status.success() {
-        anyhow::bail!("le helper a renvoyé une erreur");
+    for o in &lag {
+        let t = o.lag.as_ref().unwrap();
+        println!("→ build de {} {} (révision J-{})", o.update.name, t.version, cfg.delay_days);
+        match aur::install_lagged(t) {
+            Ok(true) => {}
+            Ok(false) => eprintln!("  échec makepkg pour {}", o.update.name),
+            Err(e) => eprintln!("  erreur {} : {e}", o.update.name),
+        }
+    }
+    if !latest.is_empty() {
+        let status = Command::new(&cfg.helper).arg("-S").args(&latest).status()?;
+        if !status.success() {
+            anyhow::bail!("le helper a renvoyé une erreur");
+        }
     }
     Ok(())
 }
@@ -156,7 +187,7 @@ fn cmd_status() -> Result<()> {
 fn cmd_config() -> Result<()> {
     let cfg = config::Config::load_or_init()?;
     println!("Config : {}", config::Config::path()?.display());
-    println!("  délai           : {} jours", cfg.delay_days);
+    println!("  délai           : {} jours ({:?})", cfg.delay_days, cfg.delay_mode);
     println!("  helper          : {}", cfg.helper);
     println!("  aur-scan         : {}", cfg.use_aur_scan);
     println!("  review IA        : {} (provider: {:?}, modèle: {})",
@@ -227,11 +258,16 @@ fn print_report(cfg: &config::Config, outcomes: &[Outcome]) {
                 format!("⛔ BLOQUÉ — {reason}")
             }
         };
-        let ver = match (o.update.old_ver.is_empty(), o.update.new_ver.is_empty()) {
-            (false, false) => format!("{} → {}", o.update.old_ver, o.update.new_ver),
-            _ => o.age_days.map(|d| format!("modifié il y a {d}j")).unwrap_or_default(),
+        let ver = match &o.lag {
+            // Mode lag : on montre la version cible (révision J-N), pas la dernière.
+            Some(t) if !o.update.old_ver.is_empty() => format!("{} → {} (J-{})", o.update.old_ver, t.version, cfg.delay_days),
+            Some(t) => format!("→ {} (J-{})", t.version, cfg.delay_days),
+            None => match (o.update.old_ver.is_empty(), o.update.new_ver.is_empty()) {
+                (false, false) => format!("{} → {}", o.update.old_ver, o.update.new_ver),
+                _ => o.age_days.map(|d| format!("modifié il y a {d}j")).unwrap_or_default(),
+            },
         };
-        println!("  {:<30} {:<22} {tag}", o.update.name, ver);
+        println!("  {:<28} {:<26} {tag}", o.update.name, ver);
     }
     println!("\nSûrs : {allow} | retardés : {delay} | bloqués : {block}");
 }

@@ -1,9 +1,10 @@
 //! Interactions avec l'AUR : liste des mises à jour, date de dernière
 //! modification (API RPC) et récupération du diff de PKGBUILD.
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -53,10 +54,19 @@ pub fn list_updates(helper: &str) -> Result<Vec<Update>> {
     Ok(updates)
 }
 
+/// Métadonnées AUR utiles d'un paquet.
+#[derive(Debug, Clone)]
+pub struct PkgInfo {
+    pub package_base: String,
+    pub last_modified: u64,
+}
+
 #[derive(Deserialize)]
 struct RpcInfo {
     #[serde(rename = "Name")]
     name: String,
+    #[serde(rename = "PackageBase")]
+    package_base: String,
     #[serde(rename = "LastModified")]
     last_modified: u64,
 }
@@ -66,9 +76,8 @@ struct RpcResponse {
     results: Vec<RpcInfo>,
 }
 
-/// Récupère le timestamp `LastModified` de chaque paquet via l'API RPC v5.
-/// Renvoie une map nom -> epoch (secondes).
-pub fn last_modified(names: &[String]) -> Result<HashMap<String, u64>> {
+/// Récupère les métadonnées (PackageBase, LastModified) via l'API RPC v5.
+pub fn fetch_infos(names: &[String]) -> Result<HashMap<String, PkgInfo>> {
     let mut map = HashMap::new();
     if names.is_empty() {
         return Ok(map);
@@ -89,10 +98,24 @@ pub fn last_modified(names: &[String]) -> Result<HashMap<String, u64>> {
             .into_json()
             .context("parsing JSON RPC")?;
         for info in resp.results {
-            map.insert(info.name, info.last_modified);
+            map.insert(
+                info.name,
+                PkgInfo {
+                    package_base: info.package_base,
+                    last_modified: info.last_modified,
+                },
+            );
         }
     }
     Ok(map)
+}
+
+/// Map nom -> timestamp `LastModified` (utilisé par la commande `status`).
+pub fn last_modified(names: &[String]) -> Result<HashMap<String, u64>> {
+    Ok(fetch_infos(names)?
+        .into_iter()
+        .map(|(k, v)| (k, v.last_modified))
+        .collect())
 }
 
 /// Encodage URL minimal (les noms de paquets AUR contiennent rarement des
@@ -152,6 +175,130 @@ pub fn pkgbuild_diff(name: &str) -> Result<String> {
         None => Ok(format!(
             "# Pas de PKGBUILD local de référence — inspection complète du PKGBUILD distant :\n{remote}"
         )),
+    }
+}
+
+// =====================================================================
+// Mode LAG : installer la révision du PKGBUILD qui était la HEAD il y a N
+// jours, via l'historique git du dépôt AUR.
+// =====================================================================
+
+/// Révision « décalée » ciblée par le mode lag.
+#[derive(Debug, Clone)]
+pub struct LagTarget {
+    pub pkgbase: String,
+    pub commit: String,
+    /// Version (epoch:pkgver-pkgrel) à ce commit, ou "?" si dynamique (VCS).
+    pub version: String,
+    /// Contenu du PKGBUILD à ce commit (pour la review).
+    pub pkgbuild: String,
+}
+
+fn aur_cache_dir() -> Result<PathBuf> {
+    let base = dirs::cache_dir().context("cache dir introuvable")?;
+    Ok(base.join("aur-guard").join("git"))
+}
+
+fn run_git(dir: &Path, args: &[&str]) -> Result<String> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .with_context(|| format!("git {args:?}"))?;
+    if !out.status.success() {
+        bail!("git {:?} : {}", args, String::from_utf8_lossy(&out.stderr).trim());
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).to_string())
+}
+
+/// Clone (ou met à jour) le dépôt git AUR du pkgbase et renvoie son chemin.
+pub fn ensure_git_repo(pkgbase: &str) -> Result<PathBuf> {
+    let dir = aur_cache_dir()?.join(pkgbase);
+    if dir.join(".git").exists() {
+        run_git(&dir, &["fetch", "--quiet", "origin"])?;
+    } else {
+        std::fs::create_dir_all(dir.parent().unwrap())?;
+        let url = format!("https://aur.archlinux.org/{pkgbase}.git");
+        let out = Command::new("git")
+            .args(["clone", "--quiet", &url])
+            .arg(&dir)
+            .output()
+            .context("git clone")?;
+        if !out.status.success() {
+            bail!("clone de {url} : {}", String::from_utf8_lossy(&out.stderr).trim());
+        }
+    }
+    Ok(dir)
+}
+
+/// Détermine la révision qui était la HEAD avant `before_epoch`.
+pub fn lagged_target(pkgbase: &str, before_epoch: u64) -> Result<Option<LagTarget>> {
+    let dir = ensure_git_repo(pkgbase)?;
+    let before = format!("--before=@{before_epoch}");
+    // origin/HEAD pointe vers la branche par défaut (master sur l'AUR).
+    let commit = run_git(&dir, &["rev-list", "-1", &before, "origin/HEAD"])
+        .or_else(|_| run_git(&dir, &["rev-list", "-1", &before, "origin/master"]))?
+        .trim()
+        .to_string();
+    if commit.is_empty() {
+        return Ok(None); // le paquet n'existait pas encore il y a N jours
+    }
+    let pkgbuild = run_git(&dir, &["show", &format!("{commit}:PKGBUILD")]).unwrap_or_default();
+    let version = parse_version(&pkgbuild);
+    Ok(Some(LagTarget {
+        pkgbase: pkgbase.to_string(),
+        commit,
+        version,
+        pkgbuild,
+    }))
+}
+
+/// Extrait la version d'un PKGBUILD (statique uniquement).
+fn parse_version(pkgbuild: &str) -> String {
+    let pick = |key: &str| -> String {
+        pkgbuild
+            .lines()
+            .find_map(|l| l.trim().strip_prefix(key))
+            .map(|v| v.trim().trim_matches('\'').trim_matches('"').to_string())
+            .unwrap_or_default()
+    };
+    let ver = pick("pkgver=");
+    if ver.is_empty() || ver.contains('$') {
+        return "?".to_string(); // version dynamique (VCS) : non gérée en lag
+    }
+    let rel = pick("pkgrel=");
+    let epoch = pick("epoch=");
+    let base = if rel.is_empty() { ver } else { format!("{ver}-{rel}") };
+    if epoch.is_empty() {
+        base
+    } else {
+        format!("{epoch}:{base}")
+    }
+}
+
+/// Construit et installe la révision décalée (checkout + makepkg -si).
+/// Retourne true si l'installation a réussi.
+pub fn install_lagged(target: &LagTarget) -> Result<bool> {
+    let dir = ensure_git_repo(&target.pkgbase)?;
+    run_git(&dir, &["checkout", "--quiet", &target.commit])?;
+    let status = Command::new("makepkg")
+        .args(["-si", "--noconfirm"])
+        .current_dir(&dir)
+        .status()
+        .context("lancement de makepkg")?;
+    // Revient sur la branche par défaut pour les prochains fetch.
+    let _ = run_git(&dir, &["checkout", "--quiet", "origin/HEAD"])
+        .or_else(|_| run_git(&dir, &["checkout", "--quiet", "master"]));
+    Ok(status.success())
+}
+
+/// Diff unifié entre le PKGBUILD installé et un nouveau contenu donné.
+pub fn diff_against_installed(name: &str, new_pkgbuild: &str) -> String {
+    match local_pkgbuild(name) {
+        Some(local) if local.trim() == new_pkgbuild.trim() => String::new(),
+        Some(local) => unified_diff(&local, new_pkgbuild, name),
+        None => format!("# Pas de référence locale — inspection complète :\n{new_pkgbuild}"),
     }
 }
 

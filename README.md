@@ -11,9 +11,16 @@ Pour chaque paquet AUR avec une mise à jour disponible :
 
 1. **Whitelist** — paquets de confiance (binaires signés d'éditeurs réputés) :
    le délai est ignoré, mais le scan et la review IA s'appliquent quand même.
-2. **Délai** — via le champ `LastModified` de l'API AUR : une version poussée
-   il y a moins de `delay_days` jours est **retardée**, le temps que la
-   communauté détecte un éventuel paquet malveillant.
+2. **Délai** — deux sémantiques (`delay_mode`) :
+   - **`lag`** (défaut) : installe la révision du PKGBUILD qui était la `HEAD`
+     du dépôt git AUR il y a `delay_days` jours (cette révision a été exposée à
+     la communauté tout ce temps). Les mises à jour arrivent toujours, avec un
+     retard constant — pas de blocage permanent des paquets à maj fréquente.
+     L'AUR ne stockant aucun binaire, la révision est **buildée localement**
+     (`git checkout <commit>` + `makepkg -si`).
+   - **`hold`** : bloque toute maj dont la dernière version a moins de
+     `delay_days` jours ; reste sur la version installée (plus strict, mais un
+     paquet mis à jour plus souvent que le délai n'est jamais installé).
 3. **Scan statique** — délègue à [`aur-scan`](https://github.com/KiefStudioMA/ks-aur-scanner)
    s'il est installé (70+ règles, base d'IOC). Une détection bloquante → refus.
 4. **Review IA** — envoie le *diff* du PKGBUILD à un LLM (Groq / OpenAI /
@@ -55,6 +62,7 @@ aur-guard review-file <PKGBUILD>  # (debug) review IA d'un fichier
 
 ```toml
 delay_days = 14
+delay_mode = "lag"     # lag | hold
 helper = "yay"
 use_aur_scan = true
 whitelist = ["google-chrome", "zen-browser-bin", "..."]

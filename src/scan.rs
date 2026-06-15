@@ -1,6 +1,7 @@
 //! Intégration de `aur-scan` (ks-aur-scanner) pour l'analyse statique.
 //! On délègue à l'outil externe s'il est présent ; sinon on renvoie « ignoré ».
 
+use std::path::Path;
 use std::process::Command;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,7 +29,23 @@ pub fn scan_package(name: &str, enabled: bool) -> ScanResult {
     if !enabled || !available() {
         return ScanResult::Skipped;
     }
-    match Command::new("aur-scan").args(["check", name]).output() {
+    interpret(Command::new("aur-scan").args(["check", name]).output())
+}
+
+/// Scanne un fichier PKGBUILD local : `aur-scan scan <path>`.
+pub fn scan_pkgbuild_file(path: &Path, enabled: bool) -> ScanResult {
+    if !enabled || !available() {
+        return ScanResult::Skipped;
+    }
+    let path = match path.to_str() {
+        Some(p) => p,
+        None => return ScanResult::Skipped,
+    };
+    interpret(Command::new("aur-scan").args(["scan", path]).output())
+}
+
+fn interpret(output: std::io::Result<std::process::Output>) -> ScanResult {
+    match output {
         Ok(out) => {
             if out.status.success() {
                 ScanResult::Clean

@@ -97,10 +97,30 @@ impl AiConfig {
     }
 }
 
+/// Sémantique du délai de sécurité.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DelayMode {
+    /// Bloque toute maj dont la dernière version a moins de `delay_days`.
+    /// Reste sur la version installée (risque : paquets à maj fréquente jamais
+    /// mis à jour).
+    Hold,
+    /// Installe la révision qui était la HEAD du git AUR il y a `delay_days`
+    /// jours. Les maj arrivent toujours, avec un retard constant.
+    Lag,
+}
+
+fn default_delay_mode() -> DelayMode {
+    DelayMode::Lag
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     /// Nombre de jours pendant lesquels une maj fraîche est retardée.
     pub delay_days: u64,
+    /// Sémantique du délai (hold ou lag).
+    #[serde(default = "default_delay_mode")]
+    pub delay_mode: DelayMode,
     /// Helper AUR à utiliser pour lister et installer (yay/paru).
     pub helper: String,
     /// Active l'appel à `aur-scan` (analyse statique) s'il est installé.
@@ -115,6 +135,7 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             delay_days: 14,
+            delay_mode: DelayMode::Lag,
             helper: "yay".to_string(),
             use_aur_scan: true,
             whitelist: recommended_whitelist(),
