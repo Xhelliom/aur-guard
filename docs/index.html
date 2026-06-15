@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>aur-guard — Secure your AUR updates</title>
+<meta name="description" content="A security gate for Arch's AUR. Time-delay, whitelist, anti-revert guard, static scan and AI review of PKGBUILD diffs — before anything is built. CLI, TUI and GTK4 app.">
+<meta property="og:title" content="aur-guard — Secure your AUR updates">
+<meta property="og:description" content="Whitelist → delay → anti-revert → static scan → AI review. The supply-chain gate the AUR was missing.">
+<meta property="og:type" content="website">
+<link rel="icon" type="image/svg+xml" href="assets/logo.svg">
+<style>
+:root {
+  --bg: #f5f8fc;
+  --bg-elevated: #ffffff;
+  --bg-code: #0c1322;
+  --text: #122031;
+  --text-muted: #5a6b80;
+  --accent: #1f7ae0;
+  --accent-2: #2bd4a8;
+  --accent-soft: rgba(31,122,224,.10);
+  --glow: rgba(43,212,168,.25);
+  --border: #e1e8f1;
+  --ok: #16a34a;
+  --warn: #d98a04;
+  --bad: #dc2626;
+  --kbd-bg: #fff;
+  --kbd-border: #cbd5e1;
+  --shadow: 0 12px 34px rgba(15,30,60,.10);
+}
+[data-theme="dark"] {
+  --bg: #060a12;
+  --bg-elevated: #0d1521;
+  --bg-code: #080e1a;
+  --text: #e7eef7;
+  --text-muted: #8ba0b8;
+  --accent: #38bdf8;
+  --accent-2: #34e0b0;
+  --accent-soft: rgba(56,189,248,.10);
+  --glow: rgba(52,224,176,.30);
+  --border: #1b2a3d;
+  --ok: #34d399;
+  --warn: #fbbf24;
+  --bad: #f87171;
+  --kbd-bg: #14203200;
+  --kbd-border: #2c4159;
+  --shadow: 0 14px 40px rgba(0,0,0,.5);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Arial, sans-serif;
+  background: var(--bg); color: var(--text); line-height: 1.6;
+  transition: background .3s, color .3s; overflow-x: hidden;
+}
+a { color: var(--accent); text-decoration: none; }
+.container { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+section { padding: 96px 0; }
+.section-title { font-size: clamp(1.7rem, 3.5vw, 2.6rem); font-weight: 800; letter-spacing: -.02em; margin-bottom: 14px; }
+.section-sub { color: var(--text-muted); max-width: 620px; margin-bottom: 48px; font-size: 1.05rem; }
+
+/* nav */
+nav { position: sticky; top: 0; z-index: 50; backdrop-filter: blur(12px);
+  background: color-mix(in srgb, var(--bg) 82%, transparent); border-bottom: 1px solid var(--border); }
+.nav-inner { display: flex; align-items: center; justify-content: space-between; height: 64px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 800; color: var(--text); font-size: 1.1rem; }
+.brand img { width: 28px; height: 28px; }
+.nav-links { display: flex; align-items: center; gap: 22px; }
+.nav-links a { color: var(--text-muted); font-weight: 600; font-size: .95rem; }
+.nav-links a:hover { color: var(--text); }
+#theme-toggle { background: none; border: 1px solid var(--border); border-radius: 10px; width: 38px; height: 38px;
+  cursor: pointer; font-size: 1.05rem; color: var(--text); transition: border-color .2s, transform .2s; }
+#theme-toggle:hover { transform: scale(1.07); border-color: var(--accent); }
+
+/* hero */
+.hero { position: relative; padding: 110px 0 80px; overflow: hidden; }
+.hero::before { content: ""; position: absolute; top: -30%; right: -10%; width: 640px; height: 640px;
+  background: radial-gradient(circle, var(--glow), transparent 65%); filter: blur(20px); z-index: 0; }
+.hero-inner { position: relative; z-index: 1; max-width: 760px; }
+.tag { display: inline-flex; align-items: center; gap: 8px; font-size: .82rem; font-weight: 700;
+  color: var(--accent); background: var(--accent-soft); border: 1px solid var(--border);
+  padding: 6px 13px; border-radius: 999px; margin-bottom: 22px; }
+.hero h1 { font-size: clamp(2.4rem, 6vw, 4.1rem); font-weight: 850; letter-spacing: -.03em; line-height: 1.04; }
+.hero h1 .grad { background: linear-gradient(100deg, var(--accent), var(--accent-2)); -webkit-background-clip: text;
+  background-clip: text; color: transparent; }
+.hero p.lead { font-size: 1.2rem; color: var(--text-muted); margin: 22px 0 32px; max-width: 600px; }
+.cta-row { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 30px; }
+.btn { display: inline-flex; align-items: center; gap: 9px; font-weight: 700; font-size: 1rem;
+  padding: 13px 24px; border-radius: 12px; transition: transform .15s, box-shadow .2s; cursor: pointer; border: none; }
+.btn-primary { background: linear-gradient(100deg, var(--accent), var(--accent-2)); color: #04121f;
+  box-shadow: 0 10px 26px var(--glow); }
+.btn-primary:hover { transform: translateY(-2px); }
+.btn-ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
+.btn-ghost:hover { border-color: var(--accent); transform: translateY(-2px); }
+.badges { display: flex; flex-wrap: wrap; gap: 10px; }
+.badge { font-size: .8rem; font-weight: 600; color: var(--text-muted); border: 1px solid var(--border);
+  border-radius: 8px; padding: 5px 11px; background: var(--bg-elevated); }
+
+/* alert strip */
+.threat { background: var(--bg-elevated); border-block: 1px solid var(--border); padding: 22px 0; }
+.threat .container { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.threat .em { font-size: 1.6rem; }
+.threat p { color: var(--text-muted); font-size: .98rem; }
+.threat strong { color: var(--text); }
+
+/* chain */
+.chain { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; }
+.step { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 16px; padding: 22px 18px;
+  position: relative; transition: transform .2s, border-color .2s; }
+.step:hover { transform: translateY(-4px); border-color: var(--accent); }
+.step .n { font-size: .78rem; font-weight: 800; color: var(--accent); letter-spacing: .08em; }
+.step h3 { font-size: 1.05rem; margin: 8px 0 6px; }
+.step p { font-size: .9rem; color: var(--text-muted); }
+
+/* features */
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+.card { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 18px; padding: 26px;
+  box-shadow: var(--shadow); transition: transform .2s, border-color .2s; }
+.card:hover { transform: translateY(-4px); border-color: var(--accent); }
+.card .icon { font-size: 1.7rem; margin-bottom: 12px; }
+.card h3 { font-size: 1.12rem; margin-bottom: 7px; }
+.card p { color: var(--text-muted); font-size: .96rem; }
+
+/* terminal */
+.term { background: var(--bg-code); border: 1px solid var(--border); border-radius: 16px; overflow: hidden;
+  box-shadow: var(--shadow); font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace; }
+.term-bar { display: flex; align-items: center; gap: 7px; padding: 12px 16px; border-bottom: 1px solid rgba(255,255,255,.07); }
+.dot { width: 12px; height: 12px; border-radius: 50%; }
+.term-title { margin-left: 10px; color: #8aa0b8; font-size: .82rem; }
+.term-body { padding: 20px 22px; font-size: .9rem; line-height: 1.85; color: #c9d6e5; white-space: pre-wrap; }
+.term-body .pr { color: var(--accent-2); }
+.term-body .ok { color: var(--ok); }
+.term-body .warn { color: var(--warn); }
+.term-body .bad { color: var(--bad); }
+.term-body .mut { color: #6b7d92; }
+
+/* install */
+.install-card { background: var(--bg-code); border: 1px solid var(--border); border-radius: 16px; padding: 6px;
+  box-shadow: var(--shadow); }
+.code { font-family: ui-monospace, "JetBrains Mono", monospace; color: #c9d6e5; font-size: .92rem;
+  padding: 18px 22px; white-space: pre-wrap; }
+.code .c { color: #6b7d92; }
+.code .a { color: var(--accent-2); }
+
+.two { display: grid; grid-template-columns: 1.05fr .95fr; gap: 40px; align-items: center; }
+
+/* footer */
+footer { border-top: 1px solid var(--border); padding: 44px 0; color: var(--text-muted); font-size: .92rem; }
+.footer-inner { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 18px; }
+
+/* reveal */
+.reveal { opacity: 0; transform: translateY(22px); transition: opacity .6s ease, transform .6s ease; }
+.reveal.in { opacity: 1; transform: none; }
+
+@media (max-width: 860px) {
+  .chain { grid-template-columns: 1fr 1fr; }
+  .grid { grid-template-columns: 1fr; }
+  .two { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="container nav-inner">
+    <a class="brand" href="#"><img src="assets/logo.svg" alt="aur-guard logo">aur-guard</a>
+    <div class="nav-links">
+      <a href="#chain">How it works</a>
+      <a href="#features">Features</a>
+      <a href="#install">Install</a>
+      <a href="https://github.com/Xhelliom/aur-guard" target="_blank" rel="noopener">GitHub</a>
+      <button id="theme-toggle" aria-label="Toggle theme">🌙</button>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="container hero-inner">
+    <span class="tag">🛡️ Supply-chain protection for the AUR</span>
+    <h1>Update the AUR<br>without <span class="grad">getting burned</span>.</h1>
+    <p class="lead">A security gate that vets every AUR package before it is built — time-delay, whitelist, anti-revert guard, static scan and AI review of the PKGBUILD diff.</p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="#install">⬇ Install</a>
+      <a class="btn btn-ghost" href="https://github.com/Xhelliom/aur-guard" target="_blank" rel="noopener">★ Star on GitHub</a>
+    </div>
+    <div class="badges">
+      <span class="badge">Rust</span>
+      <span class="badge">CLI · TUI · GTK4</span>
+      <span class="badge">gettext · EN / FR</span>
+      <span class="badge">MIT</span>
+    </div>
+  </div>
+</header>
+
+<div class="threat">
+  <div class="container">
+    <span class="em">⚠️</span>
+    <p><strong>June 2026:</strong> 400+ AUR packages were backdoored in a supply-chain attack — malicious PKGBUILDs silently fetching and running an infostealer. AUR packages are <strong>unsigned, community-maintained recipes</strong> built on your machine. aur-guard puts a gate in front of them.</p>
+  </div>
+</div>
+
+<section id="chain">
+  <div class="container">
+    <h2 class="section-title reveal">A decision chain, per package</h2>
+    <p class="section-sub reveal">Every AUR update runs the gauntlet. Anything uncertain is delayed or blocked — never installed by default.</p>
+    <div class="chain">
+      <div class="step reveal"><div class="n">STEP 1</div><h3>Whitelist</h3><p>Trusted signed-binary repackagers skip the delay — but still get scanned & reviewed.</p></div>
+      <div class="step reveal"><div class="n">STEP 2</div><h3>Delay (lag)</h3><p>Installs the git revision from N days ago, exposed long enough for the community to flag it.</p></div>
+      <div class="step reveal"><div class="n">STEP 3</div><h3>Anti-revert</h3><p>Refuses a revision that was cleaned/reverted since — a backdoor lingers in git history.</p></div>
+      <div class="step reveal"><div class="n">STEP 4</div><h3>Static scan</h3><p>Delegates to <code>aur-scan</code>: 70+ rules and a known-IOC database.</p></div>
+      <div class="step reveal"><div class="n">STEP 5</div><h3>AI review</h3><p>An LLM reads the exact PKGBUILD diff and votes safe / suspicious before any build.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="demo" style="padding-top:0;">
+  <div class="container two">
+    <div class="reveal">
+      <h2 class="section-title">See the verdict, not the surprise</h2>
+      <p class="section-sub">One command shows official updates, AUR updates, and a clear verdict for each — allowed, delayed, or blocked with a reason.</p>
+      <div class="badges">
+        <span class="badge">✅ allowed</span>
+        <span class="badge">⏳ delayed</span>
+        <span class="badge">⛔ blocked</span>
+      </div>
+    </div>
+    <div class="term reveal">
+      <div class="term-bar">
+        <span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span>
+        <span class="term-title">aur-guard check</span>
+      </div>
+<div class="term-body"><span class="mut">$</span> <span class="pr">aur-guard</span> check
+
+Official repositories: 138 signed updates (handled by `aur-guard upgrade`)
+
+AUR updates: 5 (delay 14d, AI review enabled)
+
+  google-cloud-cli       571 → 572         <span class="warn">⏳ delayed (5d)</span>
+  zen-browser-bin        1.20 → 1.21        <span class="ok">✅ (whitelist)</span>
+  cursor-bin             3.7.21 → 3.7.36    <span class="ok">✅ (whitelist)</span>
+  totally-legit-tool     1.0 → 1.1 (D-14)   <span class="bad">⛔ BLOCKED — AI [critical]: curl|bash</span>
+  claude-desktop-bin     1.11 → 1.12        <span class="warn">⏳ delayed (3d)</span>
+
+<span class="mut">Safe: 2 | delayed: 2 | blocked: 1</span></div>
+    </div>
+  </div>
+</section>
+
+<section id="features" style="background: var(--bg-elevated); border-block: 1px solid var(--border);">
+  <div class="container">
+    <h2 class="section-title reveal">Built like a security tool</h2>
+    <p class="section-sub reveal">Fail-closed by design: on any doubt, it delays or blocks — it never silently downgrades or installs.</p>
+    <div class="grid">
+      <div class="card reveal"><div class="icon">⏳</div><h3>True deferred updates</h3><p>Lag mode builds the exact git revision that was public N days ago — you always get updates, just safely behind.</p></div>
+      <div class="card reveal"><div class="icon">🧠</div><h3>AI review, multi-vote</h3><p>Groq, Anthropic or OpenAI — configurable. One call when safe; extra confirmation votes only to back up a block.</p></div>
+      <div class="card reveal"><div class="icon">🔑</div><h3>One safe entry point</h3><p><code>aur-guard upgrade</code> does <code>pacman -Syu</code> then the guarded AUR — so you never bypass the gate.</p></div>
+      <div class="card reveal"><div class="icon">🖥️</div><h3>CLI, TUI &amp; GTK4</h3><p>Scriptable CLI, a keyboard TUI, and a polished libadwaita app with editable whitelist and suggestions.</p></div>
+      <div class="card reveal"><div class="icon">🌍</div><h3>Multilingual</h3><p>gettext-based i18n following your system locale. English and French included, more easy to add.</p></div>
+      <div class="card reveal"><div class="icon">🔐</div><h3>Secrets stay secret</h3><p>API keys come from the environment or a <code>0600</code> file — never written to config or logs.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="install">
+  <div class="container">
+    <h2 class="section-title reveal">Install</h2>
+    <p class="section-sub reveal">Requires Rust, an AUR helper (yay/paru) and — optionally — <code>aur-scan</code> for the static layer.</p>
+    <div class="install-card reveal">
+<div class="code"><span class="c"># clone &amp; build</span>
+git clone https://github.com/Xhelliom/aur-guard
+cd aur-guard
+cargo build <span class="a">--release --features gui</span>
+
+<span class="c"># install binaries + translations</span>
+install -Dm755 target/release/aur-guard      ~/.local/bin/aur-guard
+install -Dm755 target/release/aur-guard-gui  ~/.local/bin/aur-guard-gui
+po/install.sh
+
+<span class="c"># use it</span>
+aur-guard check          <span class="c"># report — installs nothing</span>
+aur-guard upgrade        <span class="c"># official repos + safe AUR</span></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container footer-inner">
+    <span>aur-guard — MIT licensed. Built for Arch, against supply-chain attacks.</span>
+    <span><a href="https://github.com/Xhelliom/aur-guard" target="_blank" rel="noopener">github.com/Xhelliom/aur-guard</a></span>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var saved = localStorage.getItem("aurguard-theme");
+  var theme = saved || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  function apply(t) {
+    document.documentElement.setAttribute("data-theme", t);
+    document.getElementById("theme-toggle").textContent = t === "dark" ? "☀️" : "🌙";
+  }
+  apply(theme);
+  document.getElementById("theme-toggle").addEventListener("click", function () {
+    theme = theme === "dark" ? "light" : "dark";
+    localStorage.setItem("aurguard-theme", theme);
+    apply(theme);
+  });
+
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); } });
+  }, { threshold: 0.12 });
+  document.querySelectorAll(".reveal").forEach(function (el, i) {
+    el.style.transitionDelay = (i % 5 * 60) + "ms";
+    io.observe(el);
+  });
+})();
+</script>
+</body>
+</html>
