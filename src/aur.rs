@@ -122,6 +122,23 @@ pub fn fetch_infos(names: &[String]) -> Result<HashMap<String, PkgInfo>> {
     Ok(map)
 }
 
+/// Liste les mises à jour des dépôts officiels via `checkupdates`
+/// (format « nom ancienne -> nouvelle »). Ces paquets sont signés et hors du
+/// périmètre de review d'aur-guard.
+pub fn official_updates() -> Vec<String> {
+    Command::new("checkupdates")
+        .output()
+        .ok()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .map(|l| l.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Liste les paquets AUR (« foreign ») installés via `pacman -Qmq`.
 pub fn installed_aur_packages() -> Vec<String> {
     Command::new("pacman")

@@ -220,11 +220,14 @@ fn scan_lagged(name: &str, pkgbuild: &str, enabled: bool) -> ScanResult {
 /// de rétrograder un paquet.
 fn vercmp(a: &str, b: &str) -> i32 {
     match Command::new("vercmp").args([a, b]).output() {
-        Ok(out) if out.status.success() => {
-            String::from_utf8_lossy(&out.stdout).trim().parse().unwrap_or(-1)
-        }
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
+            .trim()
+            .parse()
+            .unwrap_or(-1),
         _ => {
-            eprintln!("  (vercmp indisponible : comparaison de versions impossible, mise à jour ignorée)");
+            eprintln!(
+                "  (vercmp indisponible : comparaison de versions impossible, mise à jour ignorée)"
+            );
             -1
         }
     }

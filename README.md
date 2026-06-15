@@ -49,10 +49,16 @@ Trois frontends partagent le même cœur :
 - **GUI** (GTK4 / libadwaita) — binaire `aur-guard-gui` : réglages éditables +
   rapport des mises à jour (✅ sûr / ⏳ retardé / ⛔ bloqué) + installation.
 
+aur-guard **ne gère que les paquets AUR** (le contenu non vérifié). Les dépôts
+officiels d'Arch sont signés et hors de son périmètre. Pour éviter qu'on les
+mette à jour à part (et qu'on contourne la review AUR avec un `yay -Syu`), la
+commande `upgrade` enchaîne les deux : `pacman -Syu` puis les AUR sûrs.
+
 ```bash
 aur-guard            # rapport (alias de `check`), n'installe rien
-aur-guard check      # idem
-aur-guard apply      # installe les paquets jugés sûrs
+aur-guard check      # idem (+ rappel du nombre de maj officielles)
+aur-guard upgrade    # dépôts officiels (pacman -Syu) PUIS paquets AUR sûrs
+aur-guard apply      # uniquement les paquets AUR jugés sûrs
 aur-guard apply --dry-run
 aur-guard status     # âge (dernière modif AUR) de tous les paquets AUR installés
 aur-guard config     # chemin + résumé de la configuration

@@ -87,17 +87,17 @@ fn build_ui(app: &adw::Application) {
         .build();
 
     let check_btn = gtk::Button::builder()
-        .label("Vérifier les mises à jour")
-        .css_classes(["suggested-action", "pill"])
-        .build();
-    let apply_btn = gtk::Button::builder()
-        .label("Installer les paquets sûrs")
+        .label("Vérifier")
         .css_classes(["pill"])
-        .sensitive(false)
+        .build();
+    let upgrade_btn = gtk::Button::builder()
+        .label("Tout mettre à jour")
+        .css_classes(["suggested-action", "pill"])
+        .tooltip_text("Dépôts officiels (pacman -Syu) puis paquets AUR sûrs")
         .build();
     let btn_box = gtk::Box::new(Orientation::Horizontal, 8);
     btn_box.append(&check_btn);
-    btn_box.append(&apply_btn);
+    btn_box.append(&upgrade_btn);
     updates.set_header_suffix(Some(&btn_box));
 
     let results = gtk::ListBox::builder()
@@ -138,70 +138,69 @@ fn build_ui(app: &adw::Application) {
         });
     }
 
-    wire_check(&cfg, &check_btn, &apply_btn, &results);
-    wire_apply(&apply_btn, &overlay);
+    wire_check(&cfg, &check_btn, &results);
+    wire_upgrade(&upgrade_btn, &overlay);
 
     window.present();
 }
 
-/// Branche le bouton « Vérifier » : évaluation en arrière-plan puis affichage.
-fn wire_check(
-    cfg: &Rc<RefCell<Config>>,
-    check_btn: &gtk::Button,
-    apply_btn: &gtk::Button,
-    results: &gtk::ListBox,
-) {
+/// Branche le bouton « Vérifier » : évaluation en arrière-plan puis affichage,
+/// avec en tête un rappel du nombre de maj des dépôts officiels (signées).
+fn wire_check(cfg: &Rc<RefCell<Config>>, check_btn: &gtk::Button, results: &gtk::ListBox) {
     let cfg = cfg.clone();
     let results = results.clone();
     let check_btn_outer = check_btn.clone();
-    let apply_btn = apply_btn.clone();
     check_btn.connect_clicked(move |_| {
         check_btn_outer.set_sensitive(false);
         check_btn_outer.set_label("Vérification…");
         clear_listbox(&results);
 
         let snapshot = cfg.borrow().clone();
-        let (tx, rx) = async_channel::bounded::<Result<Vec<Outcome>, String>>(1);
+        let (tx, rx) = async_channel::bounded::<Result<(usize, Vec<Outcome>), String>>(1);
         std::thread::spawn(move || {
-            let res = pipeline::evaluate(&snapshot).map_err(|e| e.to_string());
+            let official = aur::official_updates().len();
+            let res = pipeline::evaluate(&snapshot)
+                .map(|o| (official, o))
+                .map_err(|e| e.to_string());
             let _ = tx.send_blocking(res);
         });
 
         let results = results.clone();
         let check_btn_inner = check_btn_outer.clone();
-        let apply_btn = apply_btn.clone();
         glib::spawn_future_local(async move {
             if let Ok(res) = rx.recv().await {
                 match res {
-                    Ok(outcomes) => {
-                        let mut safe = 0;
+                    Ok((official, outcomes)) => {
+                        if official > 0 {
+                            results.append(&info_row(&format!(
+                                "Dépôts officiels : {official} maj signées (bouton « Tout mettre à jour »)"
+                            )));
+                        }
                         if outcomes.is_empty() {
                             results.append(&info_row("Aucune mise à jour AUR disponible."));
                         }
                         for o in &outcomes {
-                            if matches!(o.decision, Decision::Allow) {
-                                safe += 1;
-                            }
                             results.append(&outcome_row(o));
                         }
-                        apply_btn.set_sensitive(safe > 0);
                     }
                     Err(e) => results.append(&info_row(&format!("Erreur : {e}"))),
                 }
             }
             check_btn_inner.set_sensitive(true);
-            check_btn_inner.set_label("Vérifier les mises à jour");
+            check_btn_inner.set_label("Vérifier");
         });
     });
 }
 
-/// Branche le bouton « Installer » : lance `aur-guard apply` dans un terminal.
-/// La CLI gère toute la logique (lag = makepkg, sinon helper -S) et le sudo.
-fn wire_apply(apply_btn: &gtk::Button, overlay: &adw::ToastOverlay) {
+/// Branche le bouton « Tout mettre à jour » : lance `aur-guard upgrade` dans un
+/// terminal (dépôts officiels via pacman -Syu puis paquets AUR sûrs).
+fn wire_upgrade(upgrade_btn: &gtk::Button, overlay: &adw::ToastOverlay) {
     let overlay = overlay.clone();
-    apply_btn.connect_clicked(move |_| {
-        let _ = launch_in_terminal("aur-guard apply");
-        overlay.add_toast(adw::Toast::new("Installation lancée dans un terminal"));
+    upgrade_btn.connect_clicked(move |_| {
+        let _ = launch_in_terminal("aur-guard upgrade");
+        overlay.add_toast(adw::Toast::new(
+            "Mise à jour complète lancée dans un terminal",
+        ));
     });
 }
 

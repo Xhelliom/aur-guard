@@ -28,12 +28,14 @@ struct Cli {
 enum Cmd {
     /// Rapport : évalue les maj disponibles sans rien installer (défaut).
     Check,
-    /// Installe les paquets jugés sûrs via le helper AUR.
+    /// Installe les paquets AUR jugés sûrs (sans toucher aux dépôts officiels).
     Apply {
         /// N'installe pas, montre seulement la commande qui serait lancée.
         #[arg(long)]
         dry_run: bool,
     },
+    /// Met à jour TOUT : dépôts officiels (pacman -Syu) puis paquets AUR sûrs.
+    Upgrade,
     /// Affiche l'âge (dernière modif AUR) de tous les paquets AUR installés.
     Status,
     /// Affiche le chemin du fichier de config (et le crée si absent).
@@ -69,6 +71,7 @@ fn run() -> Result<()> {
     match cli.cmd.unwrap_or(Cmd::Check) {
         Cmd::Check => cmd_check(),
         Cmd::Apply { dry_run } => cmd_apply(dry_run),
+        Cmd::Upgrade => cmd_upgrade(),
         Cmd::Status => cmd_status(),
         Cmd::Config => cmd_config(),
         Cmd::InstallHook => cmd_install_hook(),
@@ -105,9 +108,29 @@ fn cmd_review_file(path: &str) -> Result<()> {
 
 fn cmd_check() -> Result<()> {
     let cfg = config::Config::load_or_init()?;
+    print_official_summary();
     let outcomes = pipeline::evaluate(&cfg)?;
     print_report(&cfg, &outcomes);
     Ok(())
+}
+
+/// Rappelle le nombre de maj des dépôts officiels (signées, hors review).
+fn print_official_summary() {
+    let n = aur::official_updates().len();
+    if n > 0 {
+        println!("Dépôts officiels : {n} mises à jour signées (gérées par `aur-guard upgrade`)\n");
+    }
+}
+
+/// Met à jour les dépôts officiels puis les paquets AUR sûrs.
+fn cmd_upgrade() -> Result<()> {
+    println!("=== Dépôts officiels (pacman -Syu) ===");
+    let status = Command::new("sudo").args(["pacman", "-Syu"]).status()?;
+    if !status.success() {
+        anyhow::bail!("pacman -Syu a échoué — mise à jour AUR non lancée");
+    }
+    println!("\n=== Paquets AUR (chaîne de sécurité aur-guard) ===");
+    cmd_apply(false)
 }
 
 fn cmd_apply(dry_run: bool) -> Result<()> {
@@ -260,7 +283,7 @@ fn cmd_install_hook() -> Result<()> {
          aur=$({exe} check 2>/dev/null | grep -c \"✅\"); \
          if [ \"$updates\" -gt 0 ] || [ \"$aur\" -gt 0 ]; then \
          notify-send -u normal \"Mises à jour disponibles\" \
-         \"$updates paquets dépôts + $aur maj AUR sûres (aur-guard apply)\"; \
+         \"$updates paquets dépôts + $aur maj AUR sûres (aur-guard upgrade)\"; \
          else notify-send -u low \"Système à jour\" \"Aucune mise à jour\"; fi'\n"
     );
 
