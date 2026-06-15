@@ -76,8 +76,10 @@ cargo clippy --all-targets --features gui
   ambiguïté) penche vers *retarder/bloquer*, jamais vers *installer*.
 - Le scan et la review IA portent sur **exactement la révision qui sera
   installée** (en mode lag : la révision décalée, pas la dernière).
-- Les secrets (clés API) viennent **uniquement** d'une variable d'environnement.
-  Jamais écrits dans la config, les logs, ou un message d'erreur.
+- Les secrets (clés API) ne vont **jamais** dans `config.toml`, les logs ou un
+  message d'erreur. Résolution : variable d'environnement d'abord, sinon le
+  fichier dédié `secrets.toml` écrit en `0600` (`config::Secrets` /
+  `config::resolve_api_key`). Une UI ne pré-remplit jamais une clé existante.
 - N'élargis pas une décision « autorisé » sans que les étapes en amont l'aient
   validée.
 

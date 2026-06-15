@@ -99,11 +99,11 @@ pub fn review_diff(cfg: &AiConfig, pkg: &str, diff: &str) -> Result<Verdict> {
 
 /// Un seul appel au modèle, renvoyant un Verdict.
 fn review_once(cfg: &AiConfig, pkg: &str, diff: &str) -> Result<Verdict> {
-    let key_env = cfg.key_env_or_default();
-    let api_key = std::env::var(&key_env).map_err(|_| {
+    let api_key = crate::config::resolve_api_key(cfg).ok_or_else(|| {
         anyhow!(
-            "variable d'environnement {key_env} absente (clé API {:?})",
-            cfg.provider
+            "clé API {:?} introuvable (ni dans ${}, ni dans secrets.toml)",
+            cfg.provider,
+            cfg.key_env_or_default()
         )
     })?;
     let model = cfg.model_or_default();

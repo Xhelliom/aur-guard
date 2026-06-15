@@ -6,6 +6,9 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Permissions du fichier de secrets (lecture/écriture propriétaire seul).
+const SECRETS_MODE: u32 = 0o600;
+
 /// Fournisseur d'IA pour la review du diff PKGBUILD.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -207,4 +210,79 @@ impl Config {
     pub fn is_whitelisted(&self, pkg: &str) -> bool {
         self.whitelist.iter().any(|w| w == pkg)
     }
+}
+
+/// Clés API des fournisseurs, stockées hors de `config.toml` dans un fichier à
+/// permissions restreintes. **Jamais** versionné ni journalisé.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Secrets {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub groq: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anthropic: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub openai: Option<String>,
+}
+
+impl Secrets {
+    pub fn path() -> Result<PathBuf> {
+        let base = dirs::config_dir().context("impossible de résoudre ~/.config")?;
+        Ok(base.join("aur-guard").join("secrets.toml"))
+    }
+
+    /// Charge les secrets (structure vide si le fichier est absent).
+    pub fn load() -> Secrets {
+        let Ok(path) = Self::path() else {
+            return Secrets::default();
+        };
+        std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|t| toml::from_str(&t).ok())
+            .unwrap_or_default()
+    }
+
+    /// Écrit les secrets avec des permissions `0600`.
+    pub fn save(&self) -> Result<()> {
+        let path = Self::path()?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let text = toml::to_string_pretty(self)?;
+        std::fs::write(&path, text).with_context(|| format!("écriture de {}", path.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(SECRETS_MODE))?;
+        }
+        Ok(())
+    }
+
+    pub fn get(&self, provider: Provider) -> Option<&str> {
+        match provider {
+            Provider::Groq => self.groq.as_deref(),
+            Provider::Anthropic => self.anthropic.as_deref(),
+            Provider::Openai => self.openai.as_deref(),
+        }
+    }
+
+    pub fn set(&mut self, provider: Provider, key: Option<String>) {
+        // Une chaîne vide efface la clé.
+        let key = key.filter(|k| !k.trim().is_empty());
+        match provider {
+            Provider::Groq => self.groq = key,
+            Provider::Anthropic => self.anthropic = key,
+            Provider::Openai => self.openai = key,
+        }
+    }
+}
+
+/// Résout la clé API à utiliser : variable d'environnement en priorité, sinon
+/// le fichier de secrets. Renvoie None si aucune n'est disponible.
+pub fn resolve_api_key(ai: &AiConfig) -> Option<String> {
+    if let Ok(key) = std::env::var(ai.key_env_or_default()) {
+        if !key.is_empty() {
+            return Some(key);
+        }
+    }
+    Secrets::load().get(ai.provider).map(|s| s.to_string())
 }

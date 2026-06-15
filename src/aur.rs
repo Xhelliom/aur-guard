@@ -122,6 +122,23 @@ pub fn fetch_infos(names: &[String]) -> Result<HashMap<String, PkgInfo>> {
     Ok(map)
 }
 
+/// Liste les paquets AUR (« foreign ») installés via `pacman -Qmq`.
+pub fn installed_aur_packages() -> Vec<String> {
+    Command::new("pacman")
+        .args(["-Qmq"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .map(|l| l.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Map nom -> timestamp `LastModified` (utilisé par la commande `status`).
 pub fn last_modified(names: &[String]) -> Result<HashMap<String, u64>> {
     Ok(fetch_infos(names)?

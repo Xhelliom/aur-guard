@@ -79,8 +79,18 @@ model = ""              # vide => modèle par défaut du provider
 api_key_env = ""        # vide => GROQ_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY
 ```
 
-La clé API est lue depuis une variable d'environnement, jamais stockée dans le
-fichier de config.
+La clé API n'est **jamais** stockée dans `config.toml`. Elle est résolue depuis
+la variable d'environnement du provider en priorité, sinon depuis un fichier
+dédié `~/.config/aur-guard/secrets.toml` (permissions `0600`), que l'on peut
+renseigner depuis les interfaces (GUI/TUI).
+
+## Interfaces de paramétrage
+
+La GUI met les **mises à jour en page d'accueil** et regroupe les réglages dans
+un dialogue séparé (bouton engrenage) : délai/mode/helper/scan, review IA
+(provider, **modèle**, **clé API**, votes) et **whitelist** (édition + suggestions
+des paquets AUR installés). La TUI (`aur-guard config-ui`) offre les mêmes
+réglages au clavier.
 
 ## Build
 

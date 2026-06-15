@@ -1,7 +1,9 @@
 //! Interface de paramétrage en terminal (ratatui).
-//! Édite les réglages principaux + la whitelist, et les enregistre.
+//! Édite les réglages principaux + la whitelist (avec suggestions), et les
+//! enregistre. Les clés API vont dans le fichier de secrets, pas dans la config.
 
-use crate::config::{Config, Provider};
+use crate::aur;
+use crate::config::{Config, DelayMode, Provider, Secrets};
 use anyhow::Result;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
@@ -18,7 +20,22 @@ use ratatui::{
 };
 use std::io;
 
-const FIELDS: usize = 7;
+// Index des champs de l'écran principal.
+const F_DELAY: usize = 0;
+const F_MODE: usize = 1;
+const F_HELPER: usize = 2;
+const F_SCAN: usize = 3;
+const F_AI: usize = 4;
+const F_PROVIDER: usize = 5;
+const F_MODEL: usize = 6;
+const F_APIKEY: usize = 7;
+const F_VOTES: usize = 8;
+const F_WHITELIST: usize = 9;
+const FIELDS: usize = 10;
+
+const DELAY_MAX: u64 = 365;
+const VOTES_MIN: u32 = 1;
+const VOTES_MAX: u32 = 9;
 
 #[derive(PartialEq)]
 enum Screen {
@@ -28,6 +45,7 @@ enum Screen {
 
 struct App {
     cfg: Config,
+    installed: Vec<String>,
     sel: usize,
     screen: Screen,
     wl_sel: usize,
@@ -40,45 +58,53 @@ impl App {
     fn new(cfg: Config) -> Self {
         App {
             cfg,
+            installed: aur::installed_aur_packages(),
             sel: 0,
             screen: Screen::Main,
             wl_sel: 0,
             input: None,
-            status:
-                "↑/↓ naviguer · ←/→ ou Espace modifier · Entrée: whitelist · s sauver · q quitter"
-                    .into(),
+            status: "↑/↓ naviguer · ←/→ modifier · Entrée éditer/whitelist · s sauver · q quitter"
+                .into(),
             dirty: false,
         }
     }
 
+    /// Suggestions = paquets AUR installés absents de la whitelist.
+    fn suggestions(&self) -> Vec<String> {
+        self.installed
+            .iter()
+            .filter(|p| !self.cfg.is_whitelisted(p))
+            .cloned()
+            .collect()
+    }
+
     fn adjust(&mut self, delta: i64) {
         match self.sel {
-            0 => {
+            F_DELAY => {
                 let v = self.cfg.delay_days as i64 + delta;
-                self.cfg.delay_days = v.clamp(0, 365) as u64;
+                self.cfg.delay_days = v.clamp(0, DELAY_MAX as i64) as u64;
             }
-            1 => {
+            F_MODE => {
+                self.cfg.delay_mode = match self.cfg.delay_mode {
+                    DelayMode::Lag => DelayMode::Hold,
+                    DelayMode::Hold => DelayMode::Lag,
+                };
+            }
+            F_HELPER => {
                 self.cfg.helper = if self.cfg.helper == "yay" {
                     "paru".into()
                 } else {
                     "yay".into()
                 };
             }
-            2 => self.cfg.use_aur_scan = !self.cfg.use_aur_scan,
-            3 => self.cfg.ai.enabled = !self.cfg.ai.enabled,
-            4 => {
-                self.cfg.ai.provider = match (self.cfg.ai.provider, delta >= 0) {
-                    (Provider::Groq, true) => Provider::Anthropic,
-                    (Provider::Anthropic, true) => Provider::Openai,
-                    (Provider::Openai, true) => Provider::Groq,
-                    (Provider::Groq, false) => Provider::Openai,
-                    (Provider::Anthropic, false) => Provider::Groq,
-                    (Provider::Openai, false) => Provider::Anthropic,
-                };
+            F_SCAN => self.cfg.use_aur_scan = !self.cfg.use_aur_scan,
+            F_AI => self.cfg.ai.enabled = !self.cfg.ai.enabled,
+            F_PROVIDER => {
+                self.cfg.ai.provider = cycle_provider(self.cfg.ai.provider, delta >= 0);
             }
-            5 => {
+            F_VOTES => {
                 let v = self.cfg.ai.confirm_votes as i64 + delta;
-                self.cfg.ai.confirm_votes = v.clamp(1, 9) as u32;
+                self.cfg.ai.confirm_votes = v.clamp(VOTES_MIN as i64, VOTES_MAX as i64) as u32;
             }
             _ => {}
         }
@@ -91,6 +117,7 @@ impl App {
                 "Délai de sécurité".into(),
                 format!("{} jours", self.cfg.delay_days),
             ),
+            ("Mode du délai".into(), format!("{:?}", self.cfg.delay_mode)),
             ("Helper AUR".into(), self.cfg.helper.clone()),
             (
                 "Scan statique (aur-scan)".into(),
@@ -98,6 +125,8 @@ impl App {
             ),
             ("Review IA".into(), onoff(self.cfg.ai.enabled)),
             ("Provider IA".into(), format!("{:?}", self.cfg.ai.provider)),
+            ("Modèle".into(), self.model_display()),
+            ("Clé API".into(), self.apikey_display()),
             (
                 "Votes de confirmation".into(),
                 self.cfg.ai.confirm_votes.to_string(),
@@ -107,6 +136,39 @@ impl App {
                 format!("{} paquets ▸", self.cfg.whitelist.len()),
             ),
         ]
+    }
+
+    fn model_display(&self) -> String {
+        if self.cfg.ai.model.is_empty() {
+            format!("(défaut : {})", self.cfg.ai.provider.default_model())
+        } else {
+            self.cfg.ai.model.clone()
+        }
+    }
+
+    fn apikey_display(&self) -> String {
+        let p = self.cfg.ai.provider;
+        if std::env::var(p.default_key_env())
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
+        {
+            format!("définie (${})", p.default_key_env())
+        } else if Secrets::load().get(p).is_some() {
+            "enregistrée".into()
+        } else {
+            "non définie".into()
+        }
+    }
+}
+
+fn cycle_provider(p: Provider, forward: bool) -> Provider {
+    match (p, forward) {
+        (Provider::Groq, true) => Provider::Anthropic,
+        (Provider::Anthropic, true) => Provider::Openai,
+        (Provider::Openai, true) => Provider::Groq,
+        (Provider::Groq, false) => Provider::Openai,
+        (Provider::Anthropic, false) => Provider::Groq,
+        (Provider::Openai, false) => Provider::Anthropic,
     }
 }
 
@@ -145,26 +207,44 @@ fn event_loop<B: ratatui::backend::Backend>(
             if key.kind != KeyEventKind::Press {
                 continue;
             }
-            match app.screen {
-                Screen::Main => {
-                    if main_keys(app, key.code) {
-                        break;
-                    }
+            let quit = match app.screen {
+                Screen::Main => main_keys(app, key.code),
+                Screen::Whitelist => {
+                    whitelist_keys(app, key.code);
+                    false
                 }
-                Screen::Whitelist => whitelist_keys(app, key.code),
+            };
+            if quit {
+                break;
             }
         }
     }
     Ok(())
 }
 
-/// Renvoie true s'il faut quitter.
+/// Touches de l'écran principal. Renvoie true s'il faut quitter.
 fn main_keys(app: &mut App, code: KeyCode) -> bool {
+    // Mode saisie d'un champ texte (modèle / clé API).
+    if let Some(buf) = app.input.as_mut() {
+        match code {
+            KeyCode::Char(c) => buf.push(c),
+            KeyCode::Backspace => {
+                buf.pop();
+            }
+            KeyCode::Enter => commit_text_field(app),
+            KeyCode::Esc => {
+                app.input = None;
+                app.status = "Saisie annulée".into();
+            }
+            _ => {}
+        }
+        return false;
+    }
+
     match code {
         KeyCode::Char('q') | KeyCode::Esc => {
             if app.dirty {
-                app.status =
-                    "Modifs non sauvées — 's' pour sauver, 'Q' pour quitter sans sauver".into();
+                app.status = "Modifs non sauvées — 's' pour sauver, 'Q' pour quitter sans".into();
             } else {
                 return true;
             }
@@ -174,21 +254,58 @@ fn main_keys(app: &mut App, code: KeyCode) -> bool {
         KeyCode::Down | KeyCode::Tab => app.sel = (app.sel + 1) % FIELDS,
         KeyCode::Left => app.adjust(-1),
         KeyCode::Right | KeyCode::Char(' ') => app.adjust(1),
-        KeyCode::Enter if app.sel == 6 => {
-            app.screen = Screen::Whitelist;
-            app.wl_sel = 0;
-            app.status = "↑/↓ naviguer · a ajouter · d supprimer · Échap retour".into();
-        }
-        KeyCode::Char('s') => match app.cfg.save() {
-            Ok(_) => {
-                app.dirty = false;
-                app.status = "✔ Configuration enregistrée".into();
+        KeyCode::Enter => match app.sel {
+            F_WHITELIST => {
+                app.screen = Screen::Whitelist;
+                app.wl_sel = 0;
+                app.status =
+                    "↑/↓ · a ajouter · d retirer · Entrée ajoute une suggestion · Échap retour"
+                        .into();
             }
-            Err(e) => app.status = format!("Erreur sauvegarde : {e}"),
+            F_MODEL => {
+                app.input = Some(app.cfg.ai.model.clone());
+                app.status = "Nom du modèle puis Entrée (Échap annule)".into();
+            }
+            F_APIKEY => {
+                app.input = Some(String::new());
+                app.status = format!(
+                    "Clé API {} puis Entrée (Échap annule)",
+                    app.cfg.ai.provider.default_key_env()
+                );
+            }
+            _ => {}
         },
+        KeyCode::Char('s') => save(app),
         _ => {}
     }
     false
+}
+
+/// Valide le champ texte en cours d'édition (modèle ou clé API).
+fn commit_text_field(app: &mut App) {
+    let Some(buf) = app.input.take() else {
+        return;
+    };
+    match app.sel {
+        F_MODEL => {
+            app.cfg.ai.model = buf.trim().to_string();
+            app.dirty = true;
+            app.status = "Modèle mis à jour".into();
+        }
+        F_APIKEY => {
+            if buf.trim().is_empty() {
+                app.status = "Clé vide ignorée".into();
+                return;
+            }
+            let mut secrets = Secrets::load();
+            secrets.set(app.cfg.ai.provider, Some(buf));
+            app.status = match secrets.save() {
+                Ok(_) => "✔ Clé API enregistrée (secrets.toml, 0600)".into(),
+                Err(e) => format!("Erreur secrets : {e}"),
+            };
+        }
+        _ => {}
+    }
 }
 
 fn whitelist_keys(app: &mut App, code: KeyCode) {
@@ -201,13 +318,10 @@ fn whitelist_keys(app: &mut App, code: KeyCode) {
             }
             KeyCode::Enter => {
                 let name = buf.trim().to_string();
-                if !name.is_empty() && !app.cfg.whitelist.contains(&name) {
-                    app.cfg.whitelist.push(name);
-                    app.cfg.whitelist.sort();
-                    app.dirty = true;
-                }
+                add_whitelist(app, &name);
                 app.input = None;
-                app.status = "Ajouté. a ajouter · d supprimer · Échap retour".into();
+                app.status =
+                    "a ajouter · d retirer · Entrée ajoute une suggestion · Échap retour".into();
             }
             KeyCode::Esc => {
                 app.input = None;
@@ -218,35 +332,56 @@ fn whitelist_keys(app: &mut App, code: KeyCode) {
         return;
     }
 
-    let len = app.cfg.whitelist.len();
+    let wl_len = app.cfg.whitelist.len();
+    let total = wl_len + app.suggestions().len();
     match code {
         KeyCode::Esc | KeyCode::Char('q') => {
             app.screen = Screen::Main;
-            app.status = "↑/↓ · ←/→ modifier · Entrée whitelist · s sauver · q quitter".into();
+            app.status = "↑/↓ · ←/→ modifier · Entrée éditer · s sauver · q quitter".into();
         }
-        KeyCode::Up if len > 0 => app.wl_sel = (app.wl_sel + len - 1) % len,
-        KeyCode::Down if len > 0 => app.wl_sel = (app.wl_sel + 1) % len,
+        KeyCode::Up if total > 0 => app.wl_sel = (app.wl_sel + total - 1) % total,
+        KeyCode::Down if total > 0 => app.wl_sel = (app.wl_sel + 1) % total,
         KeyCode::Char('a') => {
             app.input = Some(String::new());
             app.status = "Nom du paquet puis Entrée (Échap pour annuler)".into();
         }
-        KeyCode::Char('d') if len > 0 => {
+        KeyCode::Char('d') if app.wl_sel < wl_len => {
             let removed = app.cfg.whitelist.remove(app.wl_sel);
+            app.dirty = true;
             if app.wl_sel >= app.cfg.whitelist.len() && app.wl_sel > 0 {
                 app.wl_sel -= 1;
             }
-            app.dirty = true;
-            app.status = format!("Supprimé : {removed}");
+            app.status = format!("Retiré : {removed}");
         }
-        KeyCode::Char('s') => match app.cfg.save() {
-            Ok(_) => {
-                app.dirty = false;
-                app.status = "✔ Configuration enregistrée".into();
+        // Entrée sur une suggestion : on l'ajoute à la whitelist.
+        KeyCode::Enter if app.wl_sel >= wl_len => {
+            let sugg = app.suggestions();
+            if let Some(name) = sugg.get(app.wl_sel - wl_len).cloned() {
+                add_whitelist(app, &name);
+                app.status = format!("Ajouté : {name}");
             }
-            Err(e) => app.status = format!("Erreur sauvegarde : {e}"),
-        },
+        }
+        KeyCode::Char('s') => save(app),
         _ => {}
     }
+}
+
+fn add_whitelist(app: &mut App, name: &str) {
+    if !name.is_empty() && !app.cfg.is_whitelisted(name) {
+        app.cfg.whitelist.push(name.to_string());
+        app.cfg.whitelist.sort();
+        app.dirty = true;
+    }
+}
+
+fn save(app: &mut App) {
+    app.status = match app.cfg.save() {
+        Ok(_) => {
+            app.dirty = false;
+            "✔ Configuration enregistrée".into()
+        }
+        Err(e) => format!("Erreur sauvegarde : {e}"),
+    };
 }
 
 fn ui(f: &mut ratatui::Frame, app: &App) {
@@ -283,17 +418,29 @@ fn render_main(f: &mut ratatui::Frame, app: &App, area: ratatui::layout::Rect) {
         .into_iter()
         .enumerate()
         .map(|(i, (label, value))| {
-            let marker = if i == app.sel { "▶ " } else { "  " };
-            let style = if i == app.sel {
+            let selected = i == app.sel;
+            let editing = selected && app.input.is_some();
+            let shown = if editing {
+                edit_buffer_display(app, i)
+            } else {
+                value
+            };
+            let marker = if selected { "▶ " } else { "  " };
+            let label_style = if selected {
                 Style::default().fg(Color::Black).bg(Color::Cyan)
             } else {
                 Style::default()
             };
+            let value_style = if editing {
+                Style::default().fg(Color::Green)
+            } else {
+                Style::default().fg(Color::Yellow)
+            };
             ListItem::new(Line::from(vec![
                 Span::raw(marker),
-                Span::styled(format!("{label:<28}"), style),
+                Span::styled(format!("{label:<28}"), label_style),
                 Span::raw("  "),
-                Span::styled(value, Style::default().fg(Color::Yellow)),
+                Span::styled(shown, value_style),
             ]))
         })
         .collect();
@@ -301,30 +448,39 @@ fn render_main(f: &mut ratatui::Frame, app: &App, area: ratatui::layout::Rect) {
     f.render_widget(list, area);
 }
 
-fn render_whitelist(f: &mut ratatui::Frame, app: &App, area: ratatui::layout::Rect) {
-    let mut items: Vec<ListItem> = app
-        .cfg
-        .whitelist
-        .iter()
-        .enumerate()
-        .map(|(i, pkg)| {
-            let marker = if i == app.wl_sel && app.input.is_none() {
-                "▶ "
-            } else {
-                "  "
-            };
-            let style = if i == app.wl_sel && app.input.is_none() {
-                Style::default().fg(Color::Black).bg(Color::Cyan)
-            } else {
-                Style::default()
-            };
-            ListItem::new(Line::from(vec![
-                Span::raw(marker),
-                Span::styled(pkg.clone(), style),
-            ]))
-        })
-        .collect();
+/// Affichage du buffer en cours d'édition (clé API masquée).
+fn edit_buffer_display(app: &App, field: usize) -> String {
+    let buf = app.input.as_deref().unwrap_or("");
+    if field == F_APIKEY {
+        format!("{}_", "•".repeat(buf.chars().count()))
+    } else {
+        format!("{buf}_")
+    }
+}
 
+fn render_whitelist(f: &mut ratatui::Frame, app: &App, area: ratatui::layout::Rect) {
+    let wl_len = app.cfg.whitelist.len();
+    let suggestions = app.suggestions();
+    let mut items: Vec<ListItem> = Vec::new();
+
+    for (i, pkg) in app.cfg.whitelist.iter().enumerate() {
+        items.push(wl_line(
+            pkg,
+            i == app.wl_sel && app.input.is_none(),
+            Color::Cyan,
+            "",
+        ));
+    }
+    if !suggestions.is_empty() {
+        items.push(ListItem::new(Line::from(Span::styled(
+            "  — suggestions (paquets AUR installés) —",
+            Style::default().fg(Color::DarkGray),
+        ))));
+    }
+    for (i, pkg) in suggestions.iter().enumerate() {
+        let selected = app.wl_sel == wl_len + i && app.input.is_none();
+        items.push(wl_line(pkg, selected, Color::Green, "+ "));
+    }
     if let Some(buf) = &app.input {
         items.push(ListItem::new(Line::from(vec![
             Span::styled("+ ", Style::default().fg(Color::Green)),
@@ -332,10 +488,22 @@ fn render_whitelist(f: &mut ratatui::Frame, app: &App, area: ratatui::layout::Re
         ])));
     }
 
-    let list = List::new(items).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(format!(" whitelist ({} paquets) ", app.cfg.whitelist.len())),
-    );
+    let list = List::new(items).block(Block::default().borders(Borders::ALL).title(format!(
+        " whitelist ({wl_len}) · suggestions ({}) ",
+        suggestions.len()
+    )));
     f.render_widget(list, area);
+}
+
+fn wl_line(pkg: &str, selected: bool, accent: Color, prefix: &str) -> ListItem<'static> {
+    let marker = if selected { "▶ " } else { "  " };
+    let style = if selected {
+        Style::default().fg(Color::Black).bg(accent)
+    } else {
+        Style::default()
+    };
+    ListItem::new(Line::from(vec![
+        Span::raw(marker),
+        Span::styled(format!("{prefix}{pkg}"), style),
+    ]))
 }
