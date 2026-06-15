@@ -21,9 +21,14 @@ Pour chaque paquet AUR avec une mise à jour disponible :
    - **`hold`** : bloque toute maj dont la dernière version a moins de
      `delay_days` jours ; reste sur la version installée (plus strict, mais un
      paquet mis à jour plus souvent que le délai n'est jamais installé).
-3. **Scan statique** — délègue à [`aur-scan`](https://github.com/KiefStudioMA/ks-aur-scanner)
+3. **Garde anti-revert** (mode lag) — une version vérolée reste dans l'historique
+   git même après correction en place. On refuse donc une révision cible si elle
+   a été **annulée/nettoyée depuis** : soit un commit postérieur évoque une
+   compromission, soit un motif d'exécution dangereux (`| bash`, `base64 -d`,
+   `/dev/tcp/`…) présent dans la cible a disparu de la `HEAD` actuelle.
+4. **Scan statique** — délègue à [`aur-scan`](https://github.com/KiefStudioMA/ks-aur-scanner)
    s'il est installé (70+ règles, base d'IOC). Une détection bloquante → refus.
-4. **Review IA** — envoie le *diff* du PKGBUILD à un LLM (Groq / OpenAI /
+5. **Review IA** — envoie le *diff* du PKGBUILD à un LLM (Groq / OpenAI /
    Anthropic, configurable) qui juge `safe / suspect` avec justification.
 
 Seuls les paquets qui passent les quatre étapes sont proposés à l'installation.

@@ -120,6 +120,23 @@ fn evaluate_lag(
         return delayed(upd, age_days);
     }
 
+    // Garde : la révision cible a-t-elle été annulée/nettoyée depuis ? (Une
+    // version vérolée reste dans l'historique git après correction en place.)
+    match aur::reverted_since(&target.pkgbase, &target.commit) {
+        Ok(Some(reason)) => {
+            return Outcome {
+                decision: Decision::Blocked(format!("révision annulée depuis — {reason}")),
+                scan: ScanResult::Skipped,
+                lag: Some(target),
+                update: upd,
+                age_days,
+                whitelisted: false,
+            };
+        }
+        Ok(None) => {}
+        Err(e) => eprintln!("  (revert-check indisponible pour {}: {e})", upd.name),
+    }
+
     // Scan statique + review IA sur LA RÉVISION qu'on installera.
     let scan = scan_lagged(&upd.name, &target.pkgbuild, cfg.use_aur_scan);
     if let ScanResult::Flagged(ref detail) = scan {

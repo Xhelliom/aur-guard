@@ -41,6 +41,13 @@ enum Cmd {
         /// Chemin du PKGBUILD (ou diff) à analyser.
         path: String,
     },
+    /// (debug) Vérifie si une révision a été annulée/nettoyée depuis.
+    RevertCheck {
+        /// pkgbase du paquet.
+        pkgbase: String,
+        /// hash du commit cible.
+        commit: String,
+    },
     /// Ouvre l'interface de paramétrage en terminal (TUI).
     #[cfg(feature = "tui")]
     ConfigUi,
@@ -62,6 +69,13 @@ fn run() -> Result<()> {
         Cmd::Config => cmd_config(),
         Cmd::InstallHook => cmd_install_hook(),
         Cmd::ReviewFile { path } => cmd_review_file(&path),
+        Cmd::RevertCheck { pkgbase, commit } => {
+            match aur::reverted_since(&pkgbase, &commit)? {
+                Some(reason) => println!("⛔ SUSPECT — {reason}"),
+                None => println!("✅ révision non annulée depuis (rien de suspect)"),
+            }
+            Ok(())
+        }
         #[cfg(feature = "tui")]
         Cmd::ConfigUi => {
             let cfg = config::Config::load_or_init()?;

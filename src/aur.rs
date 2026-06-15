@@ -293,6 +293,85 @@ pub fn install_lagged(target: &LagTarget) -> Result<bool> {
     Ok(status.success())
 }
 
+/// Motifs d'exécution de code distant / reverse shell dans un PKGBUILD.
+/// Renvoie les libellés des motifs détectés.
+fn danger_signatures(pkgbuild: &str) -> Vec<&'static str> {
+    let low = pkgbuild.to_lowercase();
+    let compact = low.replace(" | ", "|").replace("| ", "|").replace(" |", "|");
+    let checks: [(&str, &str); 9] = [
+        ("|bash", "pipe vers bash"),
+        ("|sh", "pipe vers sh"),
+        ("base64 -d", "décodage base64"),
+        ("base64 --decode", "décodage base64"),
+        ("/dev/tcp/", "reverse shell /dev/tcp"),
+        ("eval \"$(", "eval de commande"),
+        ("eval $(", "eval de commande"),
+        ("nc -e", "reverse shell netcat"),
+        ("curl -s http", "téléchargement opaque curl"),
+    ];
+    let mut hits = Vec::new();
+    for (pat, label) in checks {
+        if compact.contains(pat) && !hits.contains(&label) {
+            hits.push(label);
+        }
+    }
+    hits
+}
+
+/// Garde anti-« version vérolée restée dans l'historique » : la révision cible
+/// a-t-elle été annulée/nettoyée depuis ? Renvoie Some(raison) si suspect.
+///
+/// Deux signaux :
+///   A. un commit postérieur à `commit` mentionne une compromission ;
+///   B. un motif d'exécution dangereux présent dans la révision cible a
+///      disparu de la HEAD actuelle (signe d'un nettoyage post-incident).
+pub fn reverted_since(pkgbase: &str, commit: &str) -> Result<Option<String>> {
+    let dir = aur_cache_dir()?.join(pkgbase);
+    if !dir.join(".git").exists() {
+        ensure_git_repo(pkgbase)?;
+    }
+    let target = run_git(&dir, &["show", &format!("{commit}:PKGBUILD")]).unwrap_or_default();
+    let head = run_git(&dir, &["show", "origin/HEAD:PKGBUILD"])
+        .or_else(|_| run_git(&dir, &["show", "master:PKGBUILD"]))
+        .unwrap_or_default();
+
+    // B. motif dangereux retiré depuis (signal fort, peu de faux positifs).
+    let target_sigs = danger_signatures(&target);
+    if !target_sigs.is_empty() {
+        let head_sigs = danger_signatures(&head);
+        let removed: Vec<&str> = target_sigs
+            .into_iter()
+            .filter(|s| !head_sigs.contains(s))
+            .collect();
+        if !removed.is_empty() {
+            return Ok(Some(format!(
+                "motif dangereux présent dans la révision cible mais retiré depuis : {}",
+                removed.join(", ")
+            )));
+        }
+    }
+
+    // A. message d'un commit postérieur évoquant une compromission.
+    let log = run_git(&dir, &["log", "--format=%s %b", &format!("{commit}..origin/HEAD")])
+        .or_else(|_| run_git(&dir, &["log", "--format=%s %b", &format!("{commit}..master")]))
+        .unwrap_or_default();
+    let low = log.to_lowercase();
+    const MAL: [&str; 7] = [
+        "malicious",
+        "malware",
+        "backdoor",
+        "compromise",
+        "hijack",
+        "trojan",
+        "exfiltr",
+    ];
+    if let Some(kw) = MAL.iter().find(|k| low.contains(**k)) {
+        return Ok(Some(format!("un commit postérieur mentionne « {kw} »")));
+    }
+
+    Ok(None)
+}
+
 /// Diff unifié entre le PKGBUILD installé et un nouveau contenu donné.
 pub fn diff_against_installed(name: &str, new_pkgbuild: &str) -> String {
     match local_pkgbuild(name) {
