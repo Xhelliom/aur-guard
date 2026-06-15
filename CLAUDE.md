@@ -115,6 +115,11 @@ cargo clippy --all-targets --features gui
 - Messages impératifs, préfixés `feat:`/`fix:`/`refactor:`/`docs:`/`chore:`,
   expliquant le **pourquoi**. Un commit = un changement cohérent.
 
-## Conventions de langue
-- Commentaires, doc-comments et textes d'UI en **français** (avec accents
-  corrects). Les identifiants techniques et termes consacrés restent en anglais.
+## Internationalisation (i18n)
+- Toute chaîne **visible par l'utilisateur** (CLI, TUI, GUI) passe par la macro
+  `t!(...)` (gettext). Source en **anglais** (msgid) ; traductions dans
+  `po/<lang>.po`. Interpolation positionnelle avec `{}` : `t!("Found {}", n)`.
+- Après ajout/modif d'une chaîne `t!`, mettre à jour `po/fr.po` puis recompiler
+  les `.mo` via `po/install.sh`.
+- Les `.context()`/`bail!` internes et les commentaires de code restent en
+  anglais (langue source du dépôt), non traduits.

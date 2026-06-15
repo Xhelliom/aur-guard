@@ -32,6 +32,7 @@ toml = "0.8"
 ureq = { version = "2", features = ["json", "tls"] }
 anyhow = "1"
 dirs = "5"
+gettext-rs = { version = "0.7", features = ["gettext-system"] }
 ratatui = { version = "0.29", optional = true }
 crossterm = { version = "0.28", optional = true }
 gtk4 = { version = "0.9", optional = true }

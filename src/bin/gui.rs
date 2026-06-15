@@ -12,13 +12,14 @@ use gtk4::{glib, Adjustment, Orientation, StringList};
 use libadwaita as adw;
 use libadwaita::prelude::*;
 
-use aur_guard::aur;
 use aur_guard::config::{Config, DelayMode, Provider, Secrets};
 use aur_guard::pipeline::{self, Decision, Outcome};
+use aur_guard::{aur, t};
 
 const APP_ID: &str = "fr.xhelliom.AurGuard";
 
 fn main() -> glib::ExitCode {
+    aur_guard::i18n::init();
     let app = adw::Application::builder().application_id(APP_ID).build();
     app.connect_activate(build_ui);
     app.run()
@@ -65,7 +66,7 @@ fn build_ui(app: &adw::Application) {
     let header = adw::HeaderBar::new();
     let settings_btn = gtk::Button::builder()
         .icon_name("emblem-system-symbolic")
-        .tooltip_text("Paramètres")
+        .tooltip_text(t!("Settings"))
         .build();
     header.pack_end(&settings_btn);
 
@@ -82,18 +83,18 @@ fn build_ui(app: &adw::Application) {
         .build();
 
     let updates = adw::PreferencesGroup::builder()
-        .title("Mises à jour AUR")
-        .description("Vérifie les paquets selon la chaîne de décision configurée")
+        .title(t!("AUR updates"))
+        .description(t!("Checks packages against the configured decision chain"))
         .build();
 
     let check_btn = gtk::Button::builder()
-        .label("Vérifier")
+        .label(t!("Check"))
         .css_classes(["pill"])
         .build();
     let upgrade_btn = gtk::Button::builder()
-        .label("Tout mettre à jour")
+        .label(t!("Update everything"))
         .css_classes(["suggested-action", "pill"])
-        .tooltip_text("Dépôts officiels (pacman -Syu) puis paquets AUR sûrs")
+        .tooltip_text(t!("Official repos (pacman -Syu) then safe AUR packages"))
         .build();
     let btn_box = gtk::Box::new(Orientation::Horizontal, 8);
     btn_box.append(&check_btn);
@@ -104,9 +105,7 @@ fn build_ui(app: &adw::Application) {
         .selection_mode(gtk::SelectionMode::None)
         .css_classes(["boxed-list"])
         .build();
-    results.append(&info_row(
-        "Clique sur « Vérifier les mises à jour » pour lancer l'analyse.",
-    ));
+    results.append(&info_row(&t!("Click “Check” to run the analysis.")));
     updates.add(&results);
 
     page.append(&updates);
@@ -152,7 +151,7 @@ fn wire_check(cfg: &Rc<RefCell<Config>>, check_btn: &gtk::Button, results: &gtk:
     let check_btn_outer = check_btn.clone();
     check_btn.connect_clicked(move |_| {
         check_btn_outer.set_sensitive(false);
-        check_btn_outer.set_label("Vérification…");
+        check_btn_outer.set_label(&t!("Checking…"));
         clear_listbox(&results);
 
         let snapshot = cfg.borrow().clone();
@@ -172,22 +171,23 @@ fn wire_check(cfg: &Rc<RefCell<Config>>, check_btn: &gtk::Button, results: &gtk:
                 match res {
                     Ok((official, outcomes)) => {
                         if official > 0 {
-                            results.append(&info_row(&format!(
-                                "Dépôts officiels : {official} maj signées (bouton « Tout mettre à jour »)"
+                            results.append(&info_row(&t!(
+                                "Official repositories: {} signed updates (“Update everything”)",
+                                official
                             )));
                         }
                         if outcomes.is_empty() {
-                            results.append(&info_row("Aucune mise à jour AUR disponible."));
+                            results.append(&info_row(&t!("No AUR updates available.")));
                         }
                         for o in &outcomes {
                             results.append(&outcome_row(o));
                         }
                     }
-                    Err(e) => results.append(&info_row(&format!("Erreur : {e}"))),
+                    Err(e) => results.append(&info_row(&t!("Error: {}", e))),
                 }
             }
             check_btn_inner.set_sensitive(true);
-            check_btn_inner.set_label("Vérifier");
+            check_btn_inner.set_label(&t!("Check"));
         });
     });
 }
@@ -198,9 +198,7 @@ fn wire_upgrade(upgrade_btn: &gtk::Button, overlay: &adw::ToastOverlay) {
     let overlay = overlay.clone();
     upgrade_btn.connect_clicked(move |_| {
         let _ = launch_in_terminal("aur-guard upgrade");
-        overlay.add_toast(adw::Toast::new(
-            "Mise à jour complète lancée dans un terminal",
-        ));
+        overlay.add_toast(adw::Toast::new(&t!("Full update started in a terminal")));
     });
 }
 
@@ -214,12 +212,12 @@ fn build_settings_page(
 ) -> adw::NavigationPage {
     let page = adw::PreferencesPage::new();
 
-    // --- Groupe Général ---
+    // --- General group ---
     let general = adw::PreferencesGroup::builder()
-        .title("Délai & helper")
+        .title(t!("Delay & helper"))
         .build();
     let delay_row = adw::SpinRow::builder()
-        .title("Délai de sécurité (jours)")
+        .title(t!("Security delay (days)"))
         .adjustment(&Adjustment::new(
             cfg.borrow().delay_days as f64,
             0.0,
@@ -230,19 +228,24 @@ fn build_settings_page(
         ))
         .build();
     let mode_row = adw::ComboRow::builder()
-        .title("Mode du délai")
-        .subtitle("Lag : révision d'il y a N jours · Hold : bloque les maj récentes")
-        .model(&StringList::new(&["Lag (différé)", "Hold (blocage)"]))
+        .title(t!("Delay mode"))
+        .subtitle(t!(
+            "Lag: revision from N days ago · Hold: block recent updates"
+        ))
+        .model(&StringList::new(&[
+            &t!("Lag (deferred)"),
+            &t!("Hold (block)"),
+        ]))
         .selected(u32::from(cfg.borrow().delay_mode == DelayMode::Hold))
         .build();
     let helper_row = adw::ComboRow::builder()
-        .title("Helper AUR")
+        .title(t!("AUR helper"))
         .model(&StringList::new(&["yay", "paru"]))
         .selected(if cfg.borrow().helper == "paru" { 1 } else { 0 })
         .build();
     let scan_row = adw::SwitchRow::builder()
-        .title("Scan statique (aur-scan)")
-        .subtitle("Délègue à aur-scan s'il est installé")
+        .title(t!("Static scan (aur-scan)"))
+        .subtitle(t!("Delegates to aur-scan if installed"))
         .active(cfg.borrow().use_aur_scan)
         .build();
     general.add(&delay_row);
@@ -250,25 +253,27 @@ fn build_settings_page(
     general.add(&helper_row);
     general.add(&scan_row);
 
-    // --- Groupe Review IA ---
-    let ai = adw::PreferencesGroup::builder().title("Review IA").build();
+    // --- AI review group ---
+    let ai = adw::PreferencesGroup::builder()
+        .title(t!("AI review"))
+        .build();
     let ai_row = adw::SwitchRow::builder()
-        .title("Activer la review IA")
+        .title(t!("Enable AI review"))
         .active(cfg.borrow().ai.enabled)
         .build();
     let provider_row = adw::ComboRow::builder()
-        .title("Provider")
+        .title(t!("Provider"))
         .model(&StringList::new(&["Groq", "Anthropic", "OpenAI"]))
         .selected(provider_index(cfg.borrow().ai.provider))
         .build();
     let model_row = adw::EntryRow::builder()
-        .title("Modèle (vide = défaut du provider)")
+        .title(t!("Model (empty = provider default)"))
         .text(cfg.borrow().ai.model.as_str())
         .build();
     let key_row = adw::PasswordEntryRow::builder().build();
     let votes_row = adw::SpinRow::builder()
-        .title("Votes de confirmation")
-        .subtitle("Déclenchés seulement pour confirmer un blocage")
+        .title(t!("Confirmation votes"))
+        .subtitle(t!("Triggered only to confirm a block"))
         .adjustment(&Adjustment::new(
             cfg.borrow().ai.confirm_votes as f64,
             1.0,
@@ -303,7 +308,7 @@ fn build_settings_page(
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&header);
     toolbar.set_content(Some(&page));
-    let nav_page = adw::NavigationPage::new(&toolbar, "Paramètres");
+    let nav_page = adw::NavigationPage::new(&toolbar, &t!("Settings"));
 
     // Sauvegarde quand on quitte la page de réglages (retour à l'accueil).
     {
@@ -338,13 +343,13 @@ fn build_settings_page(
                 let mut secrets = Secrets::load();
                 secrets.set(provider, Some(typed));
                 if let Err(e) = secrets.save() {
-                    overlay.add_toast(adw::Toast::new(&format!("Erreur secrets : {e}")));
+                    overlay.add_toast(adw::Toast::new(&t!("Secrets error: {}", e)));
                 }
             }
 
             let toast = match cfg.borrow().save() {
-                Ok(_) => adw::Toast::new("Paramètres enregistrés"),
-                Err(e) => adw::Toast::new(&format!("Erreur : {e}")),
+                Ok(_) => adw::Toast::new(&t!("Settings saved")),
+                Err(e) => adw::Toast::new(&t!("Error: {}", e)),
             };
             toast.set_timeout(2);
             overlay.add_toast(toast);
@@ -362,29 +367,29 @@ fn refresh_key_row(key_row: &adw::PasswordEntryRow, provider: Provider) {
         .unwrap_or(false);
     let file_set = Secrets::load().get(provider).is_some();
     let state = if env_set {
-        " — définie via $ENV"
+        t!("set via $ENV")
     } else if file_set {
-        " — déjà enregistrée"
+        t!("already saved")
     } else {
-        " — non définie"
+        t!("not set")
     };
-    key_row.set_title(&format!("Clé API {}{}", provider_name(provider), state));
+    key_row.set_title(&t!("{} API key — {}", provider_name(provider), state));
 }
 
 /// Groupe d'édition de la whitelist : paquets actuels (suppression) + champ
 /// d'ajout + suggestions (paquets AUR installés non encore whitelistés).
 fn build_whitelist_group(cfg: &Rc<RefCell<Config>>) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::builder()
-        .title("Whitelist")
-        .description("Paquets de confiance : délai ignoré, mais scan + IA conservés")
+        .title(t!("Whitelist"))
+        .description(t!("Trusted packages: delay skipped, but scan + AI kept"))
         .build();
 
     let wl_expander = adw::ExpanderRow::builder()
-        .title("Whitelist")
-        .subtitle(format!("{} paquets", cfg.borrow().whitelist.len()))
+        .title(t!("Whitelist"))
+        .subtitle(t!("{} packages", cfg.borrow().whitelist.len()))
         .build();
     let wl_add = adw::EntryRow::builder()
-        .title("Ajouter un paquet…")
+        .title(t!("Add a package…"))
         .show_apply_button(true)
         .build();
     {
@@ -412,9 +417,9 @@ fn build_whitelist_group(cfg: &Rc<RefCell<Config>>) -> adw::PreferencesGroup {
         .collect();
     if !suggestions.is_empty() {
         let sug_expander = adw::ExpanderRow::builder()
-            .title("Suggestions")
-            .subtitle(format!(
-                "{} paquets AUR installés à whitelister",
+            .title(t!("Suggestions"))
+            .subtitle(t!(
+                "{} installed AUR packages to whitelist",
                 suggestions.len()
             ))
             .build();
@@ -453,7 +458,7 @@ fn make_pkg_row(
         .icon_name("user-trash-symbolic")
         .css_classes(["flat"])
         .valign(gtk::Align::Center)
-        .tooltip_text("Retirer de la whitelist")
+        .tooltip_text(t!("Remove from whitelist"))
         .build();
     let name_owned = name.to_string();
     let cfg = cfg.clone();
@@ -480,7 +485,7 @@ fn make_suggestion_row(
         .icon_name("list-add-symbolic")
         .css_classes(["flat"])
         .valign(gtk::Align::Center)
-        .tooltip_text("Ajouter à la whitelist")
+        .tooltip_text(t!("Add to whitelist"))
         .build();
     let name_owned = name.to_string();
     let cfg = cfg.clone();
@@ -499,7 +504,7 @@ fn make_suggestion_row(
 }
 
 fn update_wl_subtitle(expander: &adw::ExpanderRow, cfg: &Rc<RefCell<Config>>) {
-    expander.set_subtitle(&format!("{} paquets", cfg.borrow().whitelist.len()));
+    expander.set_subtitle(&t!("{} packages", cfg.borrow().whitelist.len()));
 }
 
 fn clear_listbox(list: &gtk::ListBox) {
@@ -516,23 +521,23 @@ fn outcome_row(o: &Outcome) -> adw::ActionRow {
     let (icon, label) = match &o.decision {
         Decision::Allow => {
             let s = if o.whitelisted {
-                "Autorisé (whitelist)"
+                t!("Allowed (whitelist)")
             } else {
-                "Autorisé"
+                t!("Allowed")
             };
-            ("emblem-ok-symbolic", s.to_string())
+            ("emblem-ok-symbolic", s)
         }
         Decision::Delayed(d) => (
             "appointment-soon-symbolic",
-            format!("Retardé — modifié il y a {d}j"),
+            t!("Delayed — modified {}d ago", d),
         ),
-        Decision::Blocked(reason) => ("dialog-warning-symbolic", format!("BLOQUÉ — {reason}")),
+        Decision::Blocked(reason) => ("dialog-warning-symbolic", t!("BLOCKED — {}", reason)),
     };
     let subtitle = match &o.lag {
-        Some(t) if !o.update.old_ver.is_empty() => {
-            format!("{}  ({} → {} J-N)", label, o.update.old_ver, t.version)
+        Some(target) if !o.update.old_ver.is_empty() => {
+            format!("{}  ({} → {} D-N)", label, o.update.old_ver, target.version)
         }
-        Some(t) => format!("{}  (→ {} J-N)", label, t.version),
+        Some(target) => format!("{}  (→ {} D-N)", label, target.version),
         None => match (o.update.old_ver.is_empty(), o.update.new_ver.is_empty()) {
             (false, false) => format!("{}  ({} → {})", label, o.update.old_ver, o.update.new_ver),
             _ => label,
@@ -548,7 +553,7 @@ fn outcome_row(o: &Outcome) -> adw::ActionRow {
 
 /// Tente de lancer une commande dans un émulateur de terminal courant.
 fn launch_in_terminal(cmd: &str) -> std::io::Result<()> {
-    let full = format!("{cmd}; echo; read -p 'Entrée pour fermer…'");
+    let full = format!("{cmd}; echo; read -p '{}'", t!("Press Enter to close…"));
     let candidates: [(&str, Vec<&str>); 4] = [
         ("foot", vec!["-e", "bash", "-c", &full]),
         ("kitty", vec!["bash", "-c", &full]),

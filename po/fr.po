@@ -1,0 +1,375 @@
+# French translation for aur-guard.
+msgid ""
+msgstr ""
+"Project-Id-Version: aur-guard\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Language: fr\n"
+"Language-Team: French\n"
+
+# ---- CLI (main.rs) ----
+msgid "error"
+msgstr "erreur"
+
+msgid "⛔ SUSPICIOUS — {}"
+msgstr "⛔ SUSPECT — {}"
+
+msgid "✅ revision not reverted since (nothing suspicious)"
+msgstr "✅ révision non annulée depuis (rien de suspect)"
+
+msgid "AI review of {} (provider {}, up to {} confirmation votes)"
+msgstr "Review IA de {} (provider {}, jusqu'à {} votes de confirmation)"
+
+msgid "safe"
+msgstr "sûr"
+
+msgid "severity"
+msgstr "sévérité"
+
+msgid "summary"
+msgstr "résumé"
+
+msgid "Official repositories: {} signed updates (handled by `aur-guard upgrade`)"
+msgstr "Dépôts officiels : {} mises à jour signées (gérées par `aur-guard upgrade`)"
+
+msgid "Official repositories (pacman -Syu)"
+msgstr "Dépôts officiels (pacman -Syu)"
+
+msgid "pacman -Syu failed — AUR update not started"
+msgstr "pacman -Syu a échoué — mise à jour AUR non lancée"
+
+msgid "AUR packages (aur-guard security chain)"
+msgstr "Paquets AUR (chaîne de sécurité aur-guard)"
+
+msgid "Nothing to install."
+msgstr "Rien à installer."
+
+msgid "(dry-run) build {} {} (revision D-{}, commit {})"
+msgstr "(dry-run) build {} {} (révision J-{}, commit {})"
+
+msgid "→ building {} {} (revision D-{})"
+msgstr "→ build de {} {} (révision J-{})"
+
+msgid "makepkg failed for {}"
+msgstr "échec makepkg pour {}"
+
+msgid "error {}: {}"
+msgstr "erreur {} : {}"
+
+msgid "the helper returned an error"
+msgstr "le helper a renvoyé une erreur"
+
+msgid "Age of {} installed AUR packages (delay = {}d):"
+msgstr "Âge des {} paquets AUR installés (délai = {}j) :"
+
+msgid "Config"
+msgstr "Config"
+
+msgid "delay"
+msgstr "délai"
+
+msgid "days"
+msgstr "jours"
+
+msgid "helper"
+msgstr "helper"
+
+msgid "aur-scan"
+msgstr "aur-scan"
+
+msgid "AI review"
+msgstr "review IA"
+
+msgid "provider"
+msgstr "provider"
+
+msgid "model"
+msgstr "modèle"
+
+msgid "confirm votes"
+msgstr "votes confirm."
+
+msgid "{} (triggered only on a block)"
+msgstr "{} (déclenchés seulement sur blocage)"
+
+msgid "whitelist"
+msgstr "whitelist"
+
+msgid "{} packages"
+msgstr "{} paquets"
+
+msgid "Updates available"
+msgstr "Mises à jour disponibles"
+
+msgid "System up to date"
+msgstr "Système à jour"
+
+msgid "No updates"
+msgstr "Aucune mise à jour"
+
+msgid "Backup: {}"
+msgstr "Sauvegarde : {}"
+
+msgid "Service updated: {}"
+msgstr "Service mis à jour : {}"
+
+msgid "Reload with: systemctl --user daemon-reload"
+msgstr "Recharge avec : systemctl --user daemon-reload"
+
+msgid "No AUR updates available."
+msgstr "Aucune mise à jour AUR disponible."
+
+msgid "enabled"
+msgstr "activée"
+
+msgid "disabled"
+msgstr "désactivée"
+
+msgid "AUR updates: {} (delay {}d, AI review {})"
+msgstr "Mises à jour AUR : {} (délai {}j, review IA {})"
+
+msgid "✅ (whitelist)"
+msgstr "✅ (whitelist)"
+
+msgid "✅ allowed"
+msgstr "✅ autorisé"
+
+msgid "[scan ok]"
+msgstr "[scan ok]"
+
+msgid "⏳ delayed ({}d)"
+msgstr "⏳ retardé ({}j)"
+
+msgid "⛔ BLOCKED — {}"
+msgstr "⛔ BLOQUÉ — {}"
+
+msgid "modified {}d ago"
+msgstr "modifié il y a {}j"
+
+msgid "Safe: {} | delayed: {} | blocked: {}"
+msgstr "Sûrs : {} | retardés : {} | bloqués : {}"
+
+# ---- GUI (bin/gui.rs) ----
+msgid "Settings"
+msgstr "Paramètres"
+
+msgid "AUR updates"
+msgstr "Mises à jour AUR"
+
+msgid "Checks packages against the configured decision chain"
+msgstr "Vérifie les paquets selon la chaîne de décision configurée"
+
+msgid "Check"
+msgstr "Vérifier"
+
+msgid "Update everything"
+msgstr "Tout mettre à jour"
+
+msgid "Official repos (pacman -Syu) then safe AUR packages"
+msgstr "Dépôts officiels (pacman -Syu) puis paquets AUR sûrs"
+
+msgid "Click “Check” to run the analysis."
+msgstr "Cliquez sur « Vérifier » pour lancer l'analyse."
+
+msgid "Checking…"
+msgstr "Vérification…"
+
+msgid "Official repositories: {} signed updates (“Update everything”)"
+msgstr "Dépôts officiels : {} mises à jour signées (« Tout mettre à jour »)"
+
+msgid "Error: {}"
+msgstr "Erreur : {}"
+
+msgid "Full update started in a terminal"
+msgstr "Mise à jour complète lancée dans un terminal"
+
+msgid "Delay & helper"
+msgstr "Délai & helper"
+
+msgid "Security delay (days)"
+msgstr "Délai de sécurité (jours)"
+
+msgid "Delay mode"
+msgstr "Mode du délai"
+
+msgid "Lag: revision from N days ago · Hold: block recent updates"
+msgstr "Lag : révision d'il y a N jours · Hold : bloque les maj récentes"
+
+msgid "Lag (deferred)"
+msgstr "Lag (différé)"
+
+msgid "Hold (block)"
+msgstr "Hold (blocage)"
+
+msgid "AUR helper"
+msgstr "Helper AUR"
+
+msgid "Static scan (aur-scan)"
+msgstr "Scan statique (aur-scan)"
+
+msgid "Delegates to aur-scan if installed"
+msgstr "Délègue à aur-scan s'il est installé"
+
+msgid "Enable AI review"
+msgstr "Activer la review IA"
+
+msgid "Provider"
+msgstr "Provider"
+
+msgid "Model (empty = provider default)"
+msgstr "Modèle (vide = défaut du provider)"
+
+msgid "Confirmation votes"
+msgstr "Votes de confirmation"
+
+msgid "Triggered only to confirm a block"
+msgstr "Déclenchés seulement pour confirmer un blocage"
+
+msgid "Settings saved"
+msgstr "Paramètres enregistrés"
+
+msgid "Secrets error: {}"
+msgstr "Erreur secrets : {}"
+
+msgid "set via $ENV"
+msgstr "définie via $ENV"
+
+msgid "already saved"
+msgstr "déjà enregistrée"
+
+msgid "not set"
+msgstr "non définie"
+
+msgid "{} API key — {}"
+msgstr "Clé API {} — {}"
+
+msgid "Whitelist"
+msgstr "Whitelist"
+
+msgid "Trusted packages: delay skipped, but scan + AI kept"
+msgstr "Paquets de confiance : délai ignoré, mais scan + IA conservés"
+
+msgid "Add a package…"
+msgstr "Ajouter un paquet…"
+
+msgid "{} installed AUR packages to whitelist"
+msgstr "{} paquets AUR installés à whitelister"
+
+msgid "Remove from whitelist"
+msgstr "Retirer de la whitelist"
+
+msgid "Add to whitelist"
+msgstr "Ajouter à la whitelist"
+
+msgid "Allowed (whitelist)"
+msgstr "Autorisé (whitelist)"
+
+msgid "Allowed"
+msgstr "Autorisé"
+
+msgid "Delayed — modified {}d ago"
+msgstr "Retardé — modifié il y a {}j"
+
+msgid "BLOCKED — {}"
+msgstr "BLOQUÉ — {}"
+
+msgid "Press Enter to close…"
+msgstr "Entrée pour fermer…"
+
+# ---- TUI (tui.rs) ----
+msgid "↑/↓ move · ←/→ change · Enter edit/whitelist · s save · q quit"
+msgstr "↑/↓ naviguer · ←/→ modifier · Entrée éditer/whitelist · s sauver · q quitter"
+
+msgid "Security delay"
+msgstr "Délai de sécurité"
+
+msgid "{} days"
+msgstr "{} jours"
+
+msgid "AI provider"
+msgstr "Provider IA"
+
+msgid "Model"
+msgstr "Modèle"
+
+msgid "API key"
+msgstr "Clé API"
+
+msgid "{} packages ▸"
+msgstr "{} paquets ▸"
+
+msgid "(default: {})"
+msgstr "(défaut : {})"
+
+msgid "set (${})"
+msgstr "définie (${})"
+
+msgid "saved"
+msgstr "enregistrée"
+
+msgid "✅ enabled"
+msgstr "✅ activé"
+
+msgid "⬜ disabled"
+msgstr "⬜ désactivé"
+
+msgid "Unsaved changes — 's' to save, 'Q' to quit without saving"
+msgstr "Modifs non sauvées — 's' pour sauver, 'Q' pour quitter sans"
+
+msgid "↑/↓ · a add · d remove · Enter adds a suggestion · Esc back"
+msgstr "↑/↓ · a ajouter · d retirer · Entrée ajoute une suggestion · Échap retour"
+
+msgid "Model name then Enter (Esc cancels)"
+msgstr "Nom du modèle puis Entrée (Échap annule)"
+
+msgid "{} API key then Enter (Esc cancels)"
+msgstr "Clé API {} puis Entrée (Échap annule)"
+
+msgid "Model updated"
+msgstr "Modèle mis à jour"
+
+msgid "Empty key ignored"
+msgstr "Clé vide ignorée"
+
+msgid "✔ API key saved (secrets.toml, 0600)"
+msgstr "✔ Clé API enregistrée (secrets.toml, 0600)"
+
+msgid "a add · d remove · Enter adds a suggestion · Esc back"
+msgstr "a ajouter · d retirer · Entrée ajoute une suggestion · Échap retour"
+
+msgid "Input cancelled"
+msgstr "Saisie annulée"
+
+msgid "↑/↓ · ←/→ change · Enter edit · s save · q quit"
+msgstr "↑/↓ · ←/→ modifier · Entrée éditer · s sauver · q quitter"
+
+msgid "Package name then Enter (Esc to cancel)"
+msgstr "Nom du paquet puis Entrée (Échap pour annuler)"
+
+msgid "Removed: {}"
+msgstr "Retiré : {}"
+
+msgid "Added: {}"
+msgstr "Ajouté : {}"
+
+msgid "✔ Configuration saved"
+msgstr "✔ Configuration enregistrée"
+
+msgid "Save error: {}"
+msgstr "Erreur sauvegarde : {}"
+
+msgid "aur-guard — settings"
+msgstr "aur-guard — configuration"
+
+msgid "aur-guard — whitelist"
+msgstr "aur-guard — whitelist"
+
+msgid " settings "
+msgstr " réglages "
+
+msgid "  — suggestions (installed AUR packages) —"
+msgstr "  — suggestions (paquets AUR installés) —"
+
+msgid " whitelist ({}) · suggestions ({}) "
+msgstr " whitelist ({}) · suggestions ({}) "

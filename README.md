@@ -98,6 +98,15 @@ une **page plein écran** séparée (bouton engrenage → navigation) : délai/m
 des paquets AUR installés). La TUI (`aur-guard config-ui`) offre les mêmes
 réglages au clavier.
 
+## Langues
+
+L'interface (CLI, TUI, GUI) est multilingue via gettext et suit la **locale
+système**. Anglais par défaut, français fourni. Pour installer les traductions :
+
+```bash
+po/install.sh            # compile po/*.po → ~/.local/share/locale/<lang>/…
+```
+
 ## Build
 
 ```bash

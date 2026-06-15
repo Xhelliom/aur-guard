@@ -1,23 +1,23 @@
-//! aur-guard — garde-fou de sécurité pour les mises à jour AUR.
+//! aur-guard — security gate for AUR updates.
 //!
-//! Chaîne de décision par paquet : whitelist -> délai (LastModified) ->
-//! scan statique (aur-scan) -> review IA du diff PKGBUILD.
+//! Per-package decision chain: whitelist -> delay (LastModified) ->
+//! static scan (aur-scan) -> AI review of the PKGBUILD diff.
 
 use anyhow::Result;
 use aur_guard::aur::SECS_PER_DAY;
 use aur_guard::pipeline::{Decision, Outcome};
-use aur_guard::{ai, aur, config, pipeline, scan};
+use aur_guard::{ai, aur, config, pipeline, scan, t};
 use clap::{Parser, Subcommand};
 use std::process::Command;
 
-/// Longueur d'un hash de commit abrégé à l'affichage.
+/// Length of an abbreviated commit hash for display.
 const SHORT_HASH_LEN: usize = 7;
 
 #[derive(Parser)]
 #[command(
     name = "aur-guard",
     version,
-    about = "Mises à jour AUR sécurisées : délai, whitelist, scan statique et review IA"
+    about = "Secure AUR updates: delay, whitelist, static scan and AI review"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -26,42 +26,43 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Rapport : évalue les maj disponibles sans rien installer (défaut).
+    /// Report: evaluate available updates without installing anything (default).
     Check,
-    /// Installe les paquets AUR jugés sûrs (sans toucher aux dépôts officiels).
+    /// Install AUR packages judged safe (does not touch official repos).
     Apply {
-        /// N'installe pas, montre seulement la commande qui serait lancée.
+        /// Do not install; only show the command that would run.
         #[arg(long)]
         dry_run: bool,
     },
-    /// Met à jour TOUT : dépôts officiels (pacman -Syu) puis paquets AUR sûrs.
+    /// Update EVERYTHING: official repos (pacman -Syu) then safe AUR packages.
     Upgrade,
-    /// Affiche l'âge (dernière modif AUR) de tous les paquets AUR installés.
+    /// Show the age (last AUR modification) of every installed AUR package.
     Status,
-    /// Affiche le chemin du fichier de config (et le crée si absent).
+    /// Show the config file path (and create it if missing).
     Config,
-    /// Intègre aur-guard au service systemd checkupdates-notify.
+    /// Hook aur-guard into the checkupdates-notify systemd service.
     InstallHook,
-    /// (debug) Lance la review IA sur un fichier PKGBUILD local.
+    /// (debug) Run the AI review on a local PKGBUILD file.
     ReviewFile {
-        /// Chemin du PKGBUILD (ou diff) à analyser.
+        /// Path of the PKGBUILD (or diff) to analyse.
         path: String,
     },
-    /// (debug) Vérifie si une révision a été annulée/nettoyée depuis.
+    /// (debug) Check whether a revision has been reverted/cleaned since.
     RevertCheck {
-        /// pkgbase du paquet.
+        /// Package pkgbase.
         pkgbase: String,
-        /// hash du commit cible.
+        /// Target commit hash.
         commit: String,
     },
-    /// Ouvre l'interface de paramétrage en terminal (TUI).
+    /// Open the settings UI in the terminal (TUI).
     #[cfg(feature = "tui")]
     ConfigUi,
 }
 
 fn main() {
+    aur_guard::i18n::init();
     if let Err(e) = run() {
-        eprintln!("erreur: {e:#}");
+        eprintln!("{}: {e:#}", t!("error"));
         std::process::exit(1);
     }
 }
@@ -78,8 +79,11 @@ fn run() -> Result<()> {
         Cmd::ReviewFile { path } => cmd_review_file(&path),
         Cmd::RevertCheck { pkgbase, commit } => {
             match aur::reverted_since(&pkgbase, &commit)? {
-                Some(reason) => println!("⛔ SUSPECT — {reason}"),
-                None => println!("✅ révision non annulée depuis (rien de suspect)"),
+                Some(reason) => println!("{}", t!("⛔ SUSPICIOUS — {}", reason)),
+                None => println!(
+                    "{}",
+                    t!("✅ revision not reverted since (nothing suspicious)")
+                ),
             }
             Ok(())
         }
@@ -93,16 +97,20 @@ fn run() -> Result<()> {
 
 fn cmd_review_file(path: &str) -> Result<()> {
     let cfg = config::Config::load_or_init()?;
-    let content =
-        std::fs::read_to_string(path).map_err(|e| anyhow::anyhow!("lecture de {path}: {e}"))?;
+    let content = std::fs::read_to_string(path).map_err(|e| anyhow::anyhow!("read {path}: {e}"))?;
     println!(
-        "Review IA de {path} (provider {:?}, jusqu'à {} votes de confirmation)\n",
-        cfg.ai.provider, cfg.ai.confirm_votes
+        "{}\n",
+        t!(
+            "AI review of {} (provider {}, up to {} confirmation votes)",
+            path,
+            format!("{:?}", cfg.ai.provider),
+            cfg.ai.confirm_votes
+        )
     );
     let v = ai::review_diff(&cfg.ai, path, &content)?;
-    println!("  safe     : {}", v.safe);
-    println!("  severity : {}", v.severity);
-    println!("  résumé   : {}", v.summary);
+    println!("  {:<10}: {}", t!("safe"), v.safe);
+    println!("  {:<10}: {}", t!("severity"), v.severity);
+    println!("  {:<10}: {}", t!("summary"), v.summary);
     Ok(())
 }
 
@@ -114,22 +122,31 @@ fn cmd_check() -> Result<()> {
     Ok(())
 }
 
-/// Rappelle le nombre de maj des dépôts officiels (signées, hors review).
+/// Remind how many official-repo updates are pending (signed, out of scope).
 fn print_official_summary() {
     let n = aur::official_updates().len();
     if n > 0 {
-        println!("Dépôts officiels : {n} mises à jour signées (gérées par `aur-guard upgrade`)\n");
+        println!(
+            "{}\n",
+            t!(
+                "Official repositories: {} signed updates (handled by `aur-guard upgrade`)",
+                n
+            )
+        );
     }
 }
 
-/// Met à jour les dépôts officiels puis les paquets AUR sûrs.
+/// Update the official repos then the safe AUR packages.
 fn cmd_upgrade() -> Result<()> {
-    println!("=== Dépôts officiels (pacman -Syu) ===");
+    println!("=== {} ===", t!("Official repositories (pacman -Syu)"));
     let status = Command::new("sudo").args(["pacman", "-Syu"]).status()?;
     if !status.success() {
-        anyhow::bail!("pacman -Syu a échoué — mise à jour AUR non lancée");
+        anyhow::bail!(t!("pacman -Syu failed — AUR update not started"));
     }
-    println!("\n=== Paquets AUR (chaîne de sécurité aur-guard) ===");
+    println!(
+        "\n=== {} ===",
+        t!("AUR packages (aur-guard security chain)")
+    );
     cmd_apply(false)
 }
 
@@ -143,12 +160,12 @@ fn cmd_apply(dry_run: bool) -> Result<()> {
         .filter(|o| o.decision == Decision::Allow)
         .collect();
     if allow.is_empty() {
-        println!("\nRien à installer.");
+        println!("\n{}", t!("Nothing to install."));
         return Ok(());
     }
 
-    // Sépare les révisions lag (build local via makepkg) des dernières
-    // versions (whitelist/hold, installées par le helper).
+    // Split lag revisions (built locally via makepkg) from latest versions
+    // (whitelist/hold, installed by the helper).
     let lag: Vec<&Outcome> = allow.iter().copied().filter(|o| o.lag.is_some()).collect();
     let latest: Vec<String> = allow
         .iter()
@@ -158,13 +175,16 @@ fn cmd_apply(dry_run: bool) -> Result<()> {
 
     if dry_run {
         for o in &lag {
-            let t = o.lag.as_ref().unwrap();
+            let target = o.lag.as_ref().unwrap();
             println!(
-                "(dry-run) build {} {} (révision J-{}, commit {})",
-                o.update.name,
-                t.version,
-                cfg.delay_days,
-                &t.commit[..t.commit.len().min(SHORT_HASH_LEN)]
+                "{}",
+                t!(
+                    "(dry-run) build {} {} (revision D-{}, commit {})",
+                    o.update.name,
+                    target.version,
+                    cfg.delay_days,
+                    target.commit[..target.commit.len().min(SHORT_HASH_LEN)].to_string()
+                )
             );
         }
         if !latest.is_empty() {
@@ -174,21 +194,26 @@ fn cmd_apply(dry_run: bool) -> Result<()> {
     }
 
     for o in &lag {
-        let t = o.lag.as_ref().unwrap();
+        let target = o.lag.as_ref().unwrap();
         println!(
-            "→ build de {} {} (révision J-{})",
-            o.update.name, t.version, cfg.delay_days
+            "{}",
+            t!(
+                "→ building {} {} (revision D-{})",
+                o.update.name,
+                target.version,
+                cfg.delay_days
+            )
         );
-        match aur::install_lagged(t) {
+        match aur::install_lagged(target) {
             Ok(true) => {}
-            Ok(false) => eprintln!("  échec makepkg pour {}", o.update.name),
-            Err(e) => eprintln!("  erreur {} : {e}", o.update.name),
+            Ok(false) => eprintln!("  {}", t!("makepkg failed for {}", o.update.name)),
+            Err(e) => eprintln!("  {}", t!("error {}: {}", o.update.name, e)),
         }
     }
     if !latest.is_empty() {
         let status = Command::new(&cfg.helper).arg("-S").args(&latest).status()?;
         if !status.success() {
-            anyhow::bail!("le helper a renvoyé une erreur");
+            anyhow::bail!(t!("the helper returned an error"));
         }
     }
     Ok(())
@@ -196,14 +221,9 @@ fn cmd_apply(dry_run: bool) -> Result<()> {
 
 fn cmd_status() -> Result<()> {
     let cfg = config::Config::load_or_init()?;
-    let out = Command::new(&cfg.helper).args(["-Qmq"]).output();
-    // -Qmq via pacman serait plus fiable ; on passe par pacman directement.
-    let pkgs_raw = match out {
+    let pkgs_raw = match Command::new("pacman").args(["-Qmq"]).output() {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
-        _ => {
-            let p = Command::new("pacman").args(["-Qmq"]).output()?;
-            String::from_utf8_lossy(&p.stdout).to_string()
-        }
+        _ => String::new(),
     };
     let names: Vec<String> = pkgs_raw.lines().map(|l| l.trim().to_string()).collect();
     let last_mod = aur::last_modified(&names)?;
@@ -211,9 +231,12 @@ fn cmd_status() -> Result<()> {
     let threshold = cfg.delay_days * SECS_PER_DAY;
 
     println!(
-        "Âge des {} paquets AUR installés (délai = {}j) :",
-        names.len(),
-        cfg.delay_days
+        "{}",
+        t!(
+            "Age of {} installed AUR packages (delay = {}d):",
+            names.len(),
+            cfg.delay_days
+        )
     );
     let mut rows: Vec<(String, Option<u64>)> = names
         .iter()
@@ -245,35 +268,50 @@ fn cmd_status() -> Result<()> {
 
 fn cmd_config() -> Result<()> {
     let cfg = config::Config::load_or_init()?;
-    println!("Config : {}", config::Config::path()?.display());
+    println!("{}: {}", t!("Config"), config::Config::path()?.display());
     println!(
-        "  délai           : {} jours ({:?})",
-        cfg.delay_days, cfg.delay_mode
+        "  {:<18}: {} {} ({:?})",
+        t!("delay"),
+        cfg.delay_days,
+        t!("days"),
+        cfg.delay_mode
     );
-    println!("  helper          : {}", cfg.helper);
-    println!("  aur-scan         : {}", cfg.use_aur_scan);
+    println!("  {:<18}: {}", t!("helper"), cfg.helper);
+    println!("  {:<18}: {}", t!("aur-scan"), cfg.use_aur_scan);
     println!(
-        "  review IA        : {} (provider: {:?}, modèle: {})",
+        "  {:<18}: {} ({}: {:?}, {}: {})",
+        t!("AI review"),
         cfg.ai.enabled,
+        t!("provider"),
         cfg.ai.provider,
+        t!("model"),
         cfg.ai.model_or_default()
     );
     println!(
-        "  votes confirm.   : {} (déclenchés seulement sur blocage)",
-        cfg.ai.confirm_votes
+        "  {:<18}: {}",
+        t!("confirm votes"),
+        t!("{} (triggered only on a block)", cfg.ai.confirm_votes)
     );
-    println!("  whitelist        : {} paquets", cfg.whitelist.len());
+    println!(
+        "  {:<18}: {}",
+        t!("whitelist"),
+        t!("{} packages", cfg.whitelist.len())
+    );
     Ok(())
 }
 
 fn cmd_install_hook() -> Result<()> {
-    let base = dirs::config_dir().ok_or_else(|| anyhow::anyhow!("~/.config introuvable"))?;
+    let base = dirs::config_dir().ok_or_else(|| anyhow::anyhow!("~/.config not found"))?;
     let svc = base.join("systemd/user/checkupdates-notify.service");
     let exe = std::env::current_exe()
         .ok()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "aur-guard".to_string());
 
+    // Notification text is baked in the installer's language.
+    let title_up = t!("Updates available");
+    let title_ok = t!("System up to date");
+    let body_ok = t!("No updates");
     let content = format!(
         "[Unit]\n\
          Description=Notify available system updates (aur-guard)\n\n\
@@ -282,79 +320,85 @@ fn cmd_install_hook() -> Result<()> {
          ExecStart=/bin/bash -c 'updates=$(checkupdates 2>/dev/null | wc -l); \
          aur=$({exe} check 2>/dev/null | grep -c \"✅\"); \
          if [ \"$updates\" -gt 0 ] || [ \"$aur\" -gt 0 ]; then \
-         notify-send -u normal \"Mises à jour disponibles\" \
-         \"$updates paquets dépôts + $aur maj AUR sûres (aur-guard upgrade)\"; \
-         else notify-send -u low \"Système à jour\" \"Aucune mise à jour\"; fi'\n"
+         notify-send -u normal \"{title_up}\" \
+         \"$updates repo + $aur AUR (aur-guard upgrade)\"; \
+         else notify-send -u low \"{title_ok}\" \"{body_ok}\"; fi'\n"
     );
 
     if svc.exists() {
         let backup = svc.with_extension("service.bak");
         std::fs::copy(&svc, &backup)?;
-        println!("Sauvegarde : {}", backup.display());
+        println!("{}", t!("Backup: {}", backup.display()));
     }
     std::fs::write(&svc, content)?;
-    println!("Service mis à jour : {}", svc.display());
-    println!("Recharge avec : systemctl --user daemon-reload");
+    println!("{}", t!("Service updated: {}", svc.display()));
+    println!("{}", t!("Reload with: systemctl --user daemon-reload"));
     Ok(())
 }
 
 fn print_report(cfg: &config::Config, outcomes: &[Outcome]) {
     if outcomes.is_empty() {
-        println!("Aucune mise à jour AUR disponible.");
+        println!("{}", t!("No AUR updates available."));
         return;
     }
+    let ai_state = if cfg.ai.enabled {
+        t!("enabled")
+    } else {
+        t!("disabled")
+    };
     println!(
-        "Mises à jour AUR : {} (délai {}j, review IA {})\n",
-        outcomes.len(),
-        cfg.delay_days,
-        if cfg.ai.enabled {
-            "activée"
-        } else {
-            "désactivée"
-        }
+        "{}\n",
+        t!(
+            "AUR updates: {} (delay {}d, AI review {})",
+            outcomes.len(),
+            cfg.delay_days,
+            ai_state
+        )
     );
     let (mut allow, mut delay, mut block) = (0, 0, 0);
     for o in outcomes {
         let tag = match &o.decision {
             Decision::Allow => {
                 allow += 1;
-                let scanned = matches!(o.scan, scan::ScanResult::Clean);
                 let base = if o.whitelisted {
-                    "✅ (whitelist)"
+                    t!("✅ (whitelist)")
                 } else {
-                    "✅"
+                    t!("✅ allowed")
                 };
-                if scanned {
-                    format!("{base} [scan ok]")
+                if matches!(o.scan, scan::ScanResult::Clean) {
+                    format!("{base} {}", t!("[scan ok]"))
                 } else {
-                    base.to_string()
+                    base
                 }
             }
             Decision::Delayed(d) => {
                 delay += 1;
-                format!("⏳ retardé ({d}j)")
+                t!("⏳ delayed ({}d)", d)
             }
             Decision::Blocked(reason) => {
                 block += 1;
-                format!("⛔ BLOQUÉ — {reason}")
+                t!("⛔ BLOCKED — {}", reason)
             }
         };
         let ver = match &o.lag {
-            // Mode lag : on montre la version cible (révision J-N), pas la dernière.
-            Some(t) if !o.update.old_ver.is_empty() => format!(
-                "{} → {} (J-{})",
-                o.update.old_ver, t.version, cfg.delay_days
+            // Lag mode: show the target version (revision D-N), not the latest.
+            Some(target) if !o.update.old_ver.is_empty() => format!(
+                "{} → {} (D-{})",
+                o.update.old_ver, target.version, cfg.delay_days
             ),
-            Some(t) => format!("→ {} (J-{})", t.version, cfg.delay_days),
+            Some(target) => format!("→ {} (D-{})", target.version, cfg.delay_days),
             None => match (o.update.old_ver.is_empty(), o.update.new_ver.is_empty()) {
                 (false, false) => format!("{} → {}", o.update.old_ver, o.update.new_ver),
                 _ => o
                     .age_days
-                    .map(|d| format!("modifié il y a {d}j"))
+                    .map(|d| t!("modified {}d ago", d))
                     .unwrap_or_default(),
             },
         };
         println!("  {:<28} {:<26} {tag}", o.update.name, ver);
     }
-    println!("\nSûrs : {allow} | retardés : {delay} | bloqués : {block}");
+    println!(
+        "\n{}",
+        t!("Safe: {} | delayed: {} | blocked: {}", allow, delay, block)
+    );
 }

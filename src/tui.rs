@@ -2,8 +2,8 @@
 //! Édite les réglages principaux + la whitelist (avec suggestions), et les
 //! enregistre. Les clés API vont dans le fichier de secrets, pas dans la config.
 
-use crate::aur;
 use crate::config::{Config, DelayMode, Provider, Secrets};
+use crate::{aur, t};
 use anyhow::Result;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
@@ -63,8 +63,7 @@ impl App {
             screen: Screen::Main,
             wl_sel: 0,
             input: None,
-            status: "↑/↓ naviguer · ←/→ modifier · Entrée éditer/whitelist · s sauver · q quitter"
-                .into(),
+            status: t!("↑/↓ move · ←/→ change · Enter edit/whitelist · s save · q quit"),
             dirty: false,
         }
     }
@@ -113,34 +112,28 @@ impl App {
 
     fn rows(&self) -> Vec<(String, String)> {
         vec![
+            (t!("Security delay"), t!("{} days", self.cfg.delay_days)),
+            (t!("Delay mode"), format!("{:?}", self.cfg.delay_mode)),
+            (t!("AUR helper"), self.cfg.helper.clone()),
+            (t!("Static scan (aur-scan)"), onoff(self.cfg.use_aur_scan)),
+            (t!("AI review"), onoff(self.cfg.ai.enabled)),
+            (t!("AI provider"), format!("{:?}", self.cfg.ai.provider)),
+            (t!("Model"), self.model_display()),
+            (t!("API key"), self.apikey_display()),
             (
-                "Délai de sécurité".into(),
-                format!("{} jours", self.cfg.delay_days),
-            ),
-            ("Mode du délai".into(), format!("{:?}", self.cfg.delay_mode)),
-            ("Helper AUR".into(), self.cfg.helper.clone()),
-            (
-                "Scan statique (aur-scan)".into(),
-                onoff(self.cfg.use_aur_scan),
-            ),
-            ("Review IA".into(), onoff(self.cfg.ai.enabled)),
-            ("Provider IA".into(), format!("{:?}", self.cfg.ai.provider)),
-            ("Modèle".into(), self.model_display()),
-            ("Clé API".into(), self.apikey_display()),
-            (
-                "Votes de confirmation".into(),
+                t!("Confirmation votes"),
                 self.cfg.ai.confirm_votes.to_string(),
             ),
             (
-                "Whitelist".into(),
-                format!("{} paquets ▸", self.cfg.whitelist.len()),
+                t!("Whitelist"),
+                t!("{} packages ▸", self.cfg.whitelist.len()),
             ),
         ]
     }
 
     fn model_display(&self) -> String {
         if self.cfg.ai.model.is_empty() {
-            format!("(défaut : {})", self.cfg.ai.provider.default_model())
+            t!("(default: {})", self.cfg.ai.provider.default_model())
         } else {
             self.cfg.ai.model.clone()
         }
@@ -152,11 +145,11 @@ impl App {
             .map(|v| !v.is_empty())
             .unwrap_or(false)
         {
-            format!("définie (${})", p.default_key_env())
+            t!("set (${})", p.default_key_env())
         } else if Secrets::load().get(p).is_some() {
-            "enregistrée".into()
+            t!("saved")
         } else {
-            "non définie".into()
+            t!("not set")
         }
     }
 }
@@ -174,9 +167,9 @@ fn cycle_provider(p: Provider, forward: bool) -> Provider {
 
 fn onoff(b: bool) -> String {
     if b {
-        "✅ activé".into()
+        t!("✅ enabled")
     } else {
-        "⬜ désactivé".into()
+        t!("⬜ disabled")
     }
 }
 
@@ -244,7 +237,7 @@ fn main_keys(app: &mut App, code: KeyCode) -> bool {
     match code {
         KeyCode::Char('q') | KeyCode::Esc => {
             if app.dirty {
-                app.status = "Modifs non sauvées — 's' pour sauver, 'Q' pour quitter sans".into();
+                app.status = t!("Unsaved changes — 's' to save, 'Q' to quit without saving");
             } else {
                 return true;
             }
@@ -258,18 +251,16 @@ fn main_keys(app: &mut App, code: KeyCode) -> bool {
             F_WHITELIST => {
                 app.screen = Screen::Whitelist;
                 app.wl_sel = 0;
-                app.status =
-                    "↑/↓ · a ajouter · d retirer · Entrée ajoute une suggestion · Échap retour"
-                        .into();
+                app.status = t!("↑/↓ · a add · d remove · Enter adds a suggestion · Esc back");
             }
             F_MODEL => {
                 app.input = Some(app.cfg.ai.model.clone());
-                app.status = "Nom du modèle puis Entrée (Échap annule)".into();
+                app.status = t!("Model name then Enter (Esc cancels)");
             }
             F_APIKEY => {
                 app.input = Some(String::new());
-                app.status = format!(
-                    "Clé API {} puis Entrée (Échap annule)",
+                app.status = t!(
+                    "{} API key then Enter (Esc cancels)",
                     app.cfg.ai.provider.default_key_env()
                 );
             }
@@ -290,18 +281,18 @@ fn commit_text_field(app: &mut App) {
         F_MODEL => {
             app.cfg.ai.model = buf.trim().to_string();
             app.dirty = true;
-            app.status = "Modèle mis à jour".into();
+            app.status = t!("Model updated");
         }
         F_APIKEY => {
             if buf.trim().is_empty() {
-                app.status = "Clé vide ignorée".into();
+                app.status = t!("Empty key ignored");
                 return;
             }
             let mut secrets = Secrets::load();
             secrets.set(app.cfg.ai.provider, Some(buf));
             app.status = match secrets.save() {
-                Ok(_) => "✔ Clé API enregistrée (secrets.toml, 0600)".into(),
-                Err(e) => format!("Erreur secrets : {e}"),
+                Ok(_) => t!("✔ API key saved (secrets.toml, 0600)"),
+                Err(e) => t!("Secrets error: {}", e),
             };
         }
         _ => {}
@@ -320,12 +311,11 @@ fn whitelist_keys(app: &mut App, code: KeyCode) {
                 let name = buf.trim().to_string();
                 add_whitelist(app, &name);
                 app.input = None;
-                app.status =
-                    "a ajouter · d retirer · Entrée ajoute une suggestion · Échap retour".into();
+                app.status = t!("a add · d remove · Enter adds a suggestion · Esc back");
             }
             KeyCode::Esc => {
                 app.input = None;
-                app.status = "Saisie annulée".into();
+                app.status = t!("Input cancelled");
             }
             _ => {}
         }
@@ -337,13 +327,13 @@ fn whitelist_keys(app: &mut App, code: KeyCode) {
     match code {
         KeyCode::Esc | KeyCode::Char('q') => {
             app.screen = Screen::Main;
-            app.status = "↑/↓ · ←/→ modifier · Entrée éditer · s sauver · q quitter".into();
+            app.status = t!("↑/↓ · ←/→ change · Enter edit · s save · q quit");
         }
         KeyCode::Up if total > 0 => app.wl_sel = (app.wl_sel + total - 1) % total,
         KeyCode::Down if total > 0 => app.wl_sel = (app.wl_sel + 1) % total,
         KeyCode::Char('a') => {
             app.input = Some(String::new());
-            app.status = "Nom du paquet puis Entrée (Échap pour annuler)".into();
+            app.status = t!("Package name then Enter (Esc to cancel)");
         }
         KeyCode::Char('d') if app.wl_sel < wl_len => {
             let removed = app.cfg.whitelist.remove(app.wl_sel);
@@ -351,14 +341,14 @@ fn whitelist_keys(app: &mut App, code: KeyCode) {
             if app.wl_sel >= app.cfg.whitelist.len() && app.wl_sel > 0 {
                 app.wl_sel -= 1;
             }
-            app.status = format!("Retiré : {removed}");
+            app.status = t!("Removed: {}", removed);
         }
-        // Entrée sur une suggestion : on l'ajoute à la whitelist.
+        // Enter on a suggestion: add it to the whitelist.
         KeyCode::Enter if app.wl_sel >= wl_len => {
             let sugg = app.suggestions();
             if let Some(name) = sugg.get(app.wl_sel - wl_len).cloned() {
                 add_whitelist(app, &name);
-                app.status = format!("Ajouté : {name}");
+                app.status = t!("Added: {}", name);
             }
         }
         KeyCode::Char('s') => save(app),
@@ -378,9 +368,9 @@ fn save(app: &mut App) {
     app.status = match app.cfg.save() {
         Ok(_) => {
             app.dirty = false;
-            "✔ Configuration enregistrée".into()
+            t!("✔ Configuration saved")
         }
-        Err(e) => format!("Erreur sauvegarde : {e}"),
+        Err(e) => t!("Save error: {}", e),
     };
 }
 
@@ -395,8 +385,8 @@ fn ui(f: &mut ratatui::Frame, app: &App) {
         .split(f.area());
 
     let header = match app.screen {
-        Screen::Main => "aur-guard — configuration",
-        Screen::Whitelist => "aur-guard — whitelist",
+        Screen::Main => t!("aur-guard — settings"),
+        Screen::Whitelist => t!("aur-guard — whitelist"),
     };
     let title = Paragraph::new(header)
         .style(Style::default().add_modifier(Modifier::BOLD))
@@ -444,7 +434,11 @@ fn render_main(f: &mut ratatui::Frame, app: &App, area: ratatui::layout::Rect) {
             ]))
         })
         .collect();
-    let list = List::new(items).block(Block::default().borders(Borders::ALL).title(" réglages "));
+    let list = List::new(items).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(t!(" settings ")),
+    );
     f.render_widget(list, area);
 }
 
@@ -473,7 +467,7 @@ fn render_whitelist(f: &mut ratatui::Frame, app: &App, area: ratatui::layout::Re
     }
     if !suggestions.is_empty() {
         items.push(ListItem::new(Line::from(Span::styled(
-            "  — suggestions (paquets AUR installés) —",
+            t!("  — suggestions (installed AUR packages) —"),
             Style::default().fg(Color::DarkGray),
         ))));
     }
@@ -488,8 +482,9 @@ fn render_whitelist(f: &mut ratatui::Frame, app: &App, area: ratatui::layout::Re
         ])));
     }
 
-    let list = List::new(items).block(Block::default().borders(Borders::ALL).title(format!(
-        " whitelist ({wl_len}) · suggestions ({}) ",
+    let list = List::new(items).block(Block::default().borders(Borders::ALL).title(t!(
+        " whitelist ({}) · suggestions ({}) ",
+        wl_len,
         suggestions.len()
     )));
     f.render_widget(list, area);
