@@ -1,0 +1,50 @@
+name: Release packages
+
+# Publishes the AUR package whenever a GitHub Release is published.
+#
+# The version comes from the release tag (a leading "v" is stripped, so "v0.1.0"
+# yields 0.1.0). Keep Cargo.toml's version aligned with the tag.
+#
+# Required repository secrets:
+#   AUR_SSH_PRIVATE_KEY  — private half of an SSH key saved on your AUR account
+#                          (My Account → SSH Public Key → Update).
+#   AUR_USERNAME         — commit author name for the AUR git history.
+#   AUR_EMAIL            — commit author email for the AUR git history.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to (re)publish, e.g. v0.1.0'
+        required: true
+
+jobs:
+  aur:
+    name: Publish to AUR
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pin pkgver to the release tag
+        run: |
+          tag='${{ github.event.release.tag_name || github.event.inputs.tag }}'
+          ver="${tag#v}"
+          sed -i -E "s/^pkgver=.*/pkgver=$ver/" packaging/aur/PKGBUILD
+          sed -i -E "s/^pkgrel=.*/pkgrel=1/"    packaging/aur/PKGBUILD
+          grep -E '^(pkgver|pkgrel)=' packaging/aur/PKGBUILD
+
+      # Runs makepkg in an Arch container: recomputes sha256sums (updpkgsums),
+      # regenerates .SRCINFO, then commits + pushes to the AUR over SSH.
+      - name: Deploy to the AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v2.7.2
+        with:
+          pkgname: aur-guard
+          pkgbuild: packaging/aur/PKGBUILD
+          updpkgsums: true
+          commit_username: ${{ secrets.AUR_USERNAME }}
+          commit_email: ${{ secrets.AUR_EMAIL }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "Update to ${{ github.event.release.tag_name || github.event.inputs.tag }}"
+          ssh_keyscan_types: rsa,ed25519
