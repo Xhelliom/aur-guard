@@ -5,6 +5,11 @@ masse de l'AUR de juin 2026 : plutôt que d'installer aveuglément la dernière
 version d'un paquet AUR, `aur-guard` applique une chaîne de décision avant
 chaque mise à jour.
 
+> 🌐 **Première visite ? Commencez par la page de présentation :
+> [xhelliom.github.io/aur-guard](https://xhelliom.github.io/aur-guard/)** — une
+> vue d'ensemble illustrée du projet, de ses interfaces et de sa philosophie.
+> La suite de ce README est la documentation technique.
+
 ## Chaîne de décision
 
 Pour chaque paquet AUR avec une mise à jour disponible :
@@ -63,7 +68,7 @@ aur-guard apply --dry-run
 aur-guard status     # âge (dernière modif AUR) de tous les paquets AUR installés
 aur-guard config     # chemin + résumé de la configuration
 aur-guard config-ui  # interface de paramétrage en terminal (TUI)
-aur-guard install-hook  # branche aur-guard sur le service systemd de notification
+aur-guard install   # entrée de bureau + icône + traductions + timer de notification
 aur-guard review-file <PKGBUILD>  # (debug) review IA d'un fichier
 ```
 
@@ -83,6 +88,11 @@ enabled = true
 provider = "groq"      # groq | anthropic | openai
 model = ""              # vide => modèle par défaut du provider
 api_key_env = ""        # vide => GROQ_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY
+
+[notify]
+enabled = false             # timer systemd --user de notification de bureau
+interval_hours = 6          # périodicité de la vérification
+silent_when_up_to_date = true
 ```
 
 La clé API n'est **jamais** stockée dans `config.toml`. Elle est résolue depuis
@@ -95,8 +105,19 @@ renseigner depuis les interfaces (GUI/TUI).
 La GUI met les **mises à jour en page d'accueil** et regroupe les réglages dans
 une **page plein écran** séparée (bouton engrenage → navigation) : délai/mode/helper/scan, review IA
 (provider, **modèle**, **clé API**, votes) et **whitelist** (édition + suggestions
-des paquets AUR installés). La TUI (`aur-guard config-ui`) offre les mêmes
-réglages au clavier.
+des paquets AUR installés), et les **notifications** (activation, intervalle).
+La TUI (`aur-guard config-ui`) offre les mêmes réglages au clavier.
+
+## Intégration au bureau et notifications
+
+`aur-guard install` installe l'entrée de menu (`.desktop`), l'icône et les
+traductions, puis met en place un timer systemd `--user`
+(`aur-guard-notify.timer`) qui exécute périodiquement `aur-guard notify` :
+celui-ci **compte** les mises à jour officielles et AUR disponibles (sans scan
+ni review IA, donc sans coût d'API) et envoie une notification via `notify-send`.
+L'activation et l'intervalle se règlent depuis la GUI/TUI ou la section
+`[notify]` du `config.toml` ; toute sauvegarde des réglages resynchronise le
+timer.
 
 ## Langues
 
@@ -110,14 +131,20 @@ po/install.sh            # compile po/*.po → ~/.local/share/locale/<lang>/…
 ## Build
 
 ```bash
-# CLI + TUI (défaut)
+# CLI + TUI + GUI (défaut ; nécessite gtk4 et libadwaita ≥ 1.4)
 cargo build --release
-install -Dm755 target/release/aur-guard ~/.local/bin/aur-guard
 
-# + GUI GTK4 (nécessite gtk4 et libadwaita ≥ 1.4)
-cargo build --release --features gui
-install -Dm755 target/release/aur-guard-gui ~/.local/bin/aur-guard-gui
+# Tout-en-un : copie les binaires (~/.local/bin), pose l'entrée de menu +
+# l'icône (Exec en chemin absolu), installe les traductions et le timer de
+# notification. À lancer depuis l'arborescence buildée :
+./target/release/aur-guard install
+
+# Variante sans GUI (machine headless / CLI seule) :
+cargo build --release --no-default-features --features tui
 ```
+
+> Sans la GUI (`--no-default-features`), seul le binaire CLI est copié et
+> l'entrée de menu est ignorée (le raccourci pointerait dans le vide).
 
 ## Limites
 
