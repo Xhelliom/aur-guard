@@ -14,7 +14,7 @@ use libadwaita::prelude::*;
 
 use aur_guard::config::{Config, DelayMode, Provider, Secrets};
 use aur_guard::pipeline::{self, Decision, Outcome};
-use aur_guard::{aur, t};
+use aur_guard::{aur, deploy, t};
 
 const APP_ID: &str = "fr.xhelliom.AurGuard";
 
@@ -91,6 +91,12 @@ fn build_ui(app: &adw::Application) {
         .label(t!("Check"))
         .css_classes(["pill"])
         .build();
+    let apply_btn = gtk::Button::builder()
+        .label(t!("Update selection"))
+        .css_classes(["pill"])
+        .tooltip_text(t!("Install only the checked AUR packages"))
+        .sensitive(false)
+        .build();
     let upgrade_btn = gtk::Button::builder()
         .label(t!("Update everything"))
         .css_classes(["suggested-action", "pill"])
@@ -98,8 +104,13 @@ fn build_ui(app: &adw::Application) {
         .build();
     let btn_box = gtk::Box::new(Orientation::Horizontal, 8);
     btn_box.append(&check_btn);
+    btn_box.append(&apply_btn);
     btn_box.append(&upgrade_btn);
     updates.set_header_suffix(Some(&btn_box));
+
+    // Cases à cocher des paquets « autorisés » (nom, widget) : remplie par la
+    // vérification, lue par la mise à jour sélective.
+    let selected: Rc<RefCell<Vec<(String, gtk::CheckButton)>>> = Rc::new(RefCell::new(Vec::new()));
 
     let results = gtk::ListBox::builder()
         .selection_mode(gtk::SelectionMode::None)
@@ -137,7 +148,8 @@ fn build_ui(app: &adw::Application) {
         });
     }
 
-    wire_check(&cfg, &check_btn, &results);
+    wire_check(&cfg, &check_btn, &results, &selected, &apply_btn);
+    wire_apply(&apply_btn, &selected, &overlay);
     wire_upgrade(&upgrade_btn, &overlay);
 
     window.present();
@@ -145,19 +157,29 @@ fn build_ui(app: &adw::Application) {
 
 /// Branche le bouton « Vérifier » : évaluation en arrière-plan puis affichage,
 /// avec en tête un rappel du nombre de maj des dépôts officiels (signées).
-fn wire_check(cfg: &Rc<RefCell<Config>>, check_btn: &gtk::Button, results: &gtk::ListBox) {
+fn wire_check(
+    cfg: &Rc<RefCell<Config>>,
+    check_btn: &gtk::Button,
+    results: &gtk::ListBox,
+    selected: &Rc<RefCell<Vec<(String, gtk::CheckButton)>>>,
+    apply_btn: &gtk::Button,
+) {
     let cfg = cfg.clone();
     let results = results.clone();
+    let selected = selected.clone();
+    let apply_btn = apply_btn.clone();
     let check_btn_outer = check_btn.clone();
     check_btn.connect_clicked(move |_| {
         check_btn_outer.set_sensitive(false);
         check_btn_outer.set_label(&t!("Checking…"));
         clear_listbox(&results);
+        selected.borrow_mut().clear();
+        apply_btn.set_sensitive(false);
 
         let snapshot = cfg.borrow().clone();
-        let (tx, rx) = async_channel::bounded::<Result<(usize, Vec<Outcome>), String>>(1);
+        let (tx, rx) = async_channel::bounded::<Result<(Vec<String>, Vec<Outcome>), String>>(1);
         std::thread::spawn(move || {
-            let official = aur::official_updates().len();
+            let official = aur::official_updates();
             let res = pipeline::evaluate(&snapshot)
                 .map(|o| (official, o))
                 .map_err(|e| e.to_string());
@@ -165,23 +187,40 @@ fn wire_check(cfg: &Rc<RefCell<Config>>, check_btn: &gtk::Button, results: &gtk:
         });
 
         let results = results.clone();
+        let selected = selected.clone();
+        let apply_btn = apply_btn.clone();
         let check_btn_inner = check_btn_outer.clone();
         glib::spawn_future_local(async move {
             if let Ok(res) = rx.recv().await {
                 match res {
                     Ok((official, outcomes)) => {
-                        if official > 0 {
+                        if !official.is_empty() {
                             results.append(&info_row(&t!(
                                 "Official repositories: {} signed updates (“Update everything”)",
-                                official
+                                official.len()
                             )));
+                            for line in &official {
+                                results.append(&info_row(&format!("  {line}")));
+                            }
                         }
                         if outcomes.is_empty() {
                             results.append(&info_row(&t!("No AUR updates available.")));
                         }
                         for o in &outcomes {
-                            results.append(&outcome_row(o));
+                            let row = outcome_row(o);
+                            // Seuls les paquets autorisés sont sélectionnables :
+                            // la sélection ne fait que restreindre l'ensemble
+                            // déjà validé, jamais forcer un delayed/blocked.
+                            if o.decision == Decision::Allow {
+                                let check = gtk::CheckButton::builder()
+                                    .tooltip_text(t!("Include in the selective update"))
+                                    .build();
+                                row.add_suffix(&check);
+                                selected.borrow_mut().push((o.update.name.clone(), check));
+                            }
+                            results.append(&row);
                         }
+                        apply_btn.set_sensitive(!selected.borrow().is_empty());
                     }
                     Err(e) => results.append(&info_row(&t!("Error: {}", e))),
                 }
@@ -192,12 +231,44 @@ fn wire_check(cfg: &Rc<RefCell<Config>>, check_btn: &gtk::Button, results: &gtk:
     });
 }
 
+/// Branche le bouton « Mettre à jour la sélection » : lance `aur-guard apply`
+/// (paquets AUR uniquement, sans toucher aux dépôts officiels) restreint aux
+/// paquets cochés. Le CLI réévalue la chaîne de décision à l'installation : la
+/// sélection ne contourne aucune garde, elle ne fait que restreindre.
+fn wire_apply(
+    apply_btn: &gtk::Button,
+    selected: &Rc<RefCell<Vec<(String, gtk::CheckButton)>>>,
+    overlay: &adw::ToastOverlay,
+) {
+    let selected = selected.clone();
+    let overlay = overlay.clone();
+    apply_btn.connect_clicked(move |_| {
+        let names: Vec<String> = selected
+            .borrow()
+            .iter()
+            .filter(|(_, check)| check.is_active())
+            .map(|(name, _)| name.clone())
+            .collect();
+        if names.is_empty() {
+            overlay.add_toast(adw::Toast::new(&t!("Select at least one package first")));
+            return;
+        }
+        let cli = sh_quote(&deploy::cli_command());
+        let args: String = names.iter().map(|n| format!(" {}", sh_quote(n))).collect();
+        let _ = launch_in_terminal(&format!("{cli} apply{args}"));
+        overlay.add_toast(adw::Toast::new(&t!(
+            "Selective update started in a terminal"
+        )));
+    });
+}
+
 /// Branche le bouton « Tout mettre à jour » : lance `aur-guard upgrade` dans un
 /// terminal (dépôts officiels via pacman -Syu puis paquets AUR sûrs).
 fn wire_upgrade(upgrade_btn: &gtk::Button, overlay: &adw::ToastOverlay) {
     let overlay = overlay.clone();
     upgrade_btn.connect_clicked(move |_| {
-        let _ = launch_in_terminal("aur-guard upgrade");
+        let cli = sh_quote(&deploy::cli_command());
+        let _ = launch_in_terminal(&format!("{cli} upgrade"));
         overlay.add_toast(adw::Toast::new(&t!("Full update started in a terminal")));
     });
 }
@@ -297,11 +368,51 @@ fn build_settings_page(
     ai.add(&key_row);
     ai.add(&votes_row);
 
+    // --- Notifications group ---
+    let notif = adw::PreferencesGroup::builder()
+        .title(t!("Notifications"))
+        .description(t!("Periodic desktop notification of pending updates"))
+        .build();
+    let notif_row = adw::SwitchRow::builder()
+        .title(t!("Enable notifications"))
+        .active(cfg.borrow().notify.enabled)
+        .build();
+    let interval_row = adw::SpinRow::builder()
+        .title(t!("Check interval (hours)"))
+        .adjustment(&Adjustment::new(
+            cfg.borrow().notify.interval_hours as f64,
+            1.0,
+            168.0,
+            1.0,
+            6.0,
+            0.0,
+        ))
+        .build();
+    let silent_row = adw::SwitchRow::builder()
+        .title(t!("Silent when up to date"))
+        .active(cfg.borrow().notify.silent_when_up_to_date)
+        .build();
+    let test_row = adw::ActionRow::builder()
+        .title(t!("Test notification"))
+        .subtitle(t!("Send one right now to check it works"))
+        .build();
+    let test_btn = gtk::Button::builder()
+        .label(t!("Send"))
+        .valign(gtk::Align::Center)
+        .build();
+    test_btn.connect_clicked(|_| deploy::send_test_notification());
+    test_row.add_suffix(&test_btn);
+    notif.add(&notif_row);
+    notif.add(&interval_row);
+    notif.add(&silent_row);
+    notif.add(&test_row);
+
     // --- Groupe Whitelist ---
     let wl = build_whitelist_group(cfg);
 
     page.add(&general);
     page.add(&ai);
+    page.add(&notif);
     page.add(&wl);
 
     let header = adw::HeaderBar::new();
@@ -335,6 +446,9 @@ fn build_settings_page(
                 c.ai.provider = provider;
                 c.ai.model = model_row.text().trim().to_string();
                 c.ai.confirm_votes = votes_row.value() as u32;
+                c.notify.enabled = notif_row.is_active();
+                c.notify.interval_hours = interval_row.value() as u64;
+                c.notify.silent_when_up_to_date = silent_row.is_active();
             }
 
             // La clé saisie (si non vide) va dans le fichier de secrets 0600.
@@ -353,6 +467,11 @@ fn build_settings_page(
             };
             toast.set_timeout(2);
             overlay.add_toast(toast);
+
+            // Synchronise le timer systemd de notification avec les réglages.
+            if let Err(e) = deploy::apply_notify(&cfg.borrow().notify) {
+                overlay.add_toast(adw::Toast::new(&t!("Notification setup error: {}", e)));
+            }
         });
     }
 
@@ -549,6 +668,13 @@ fn outcome_row(o: &Outcome) -> adw::ActionRow {
         .build();
     row.add_prefix(&gtk::Image::from_icon_name(icon));
     row
+}
+
+/// Entoure une chaîne de quotes simples pour l'injecter sans risque dans une
+/// ligne `bash -c` (chemins comportant des espaces). Les quotes simples internes
+/// sont échappées via la séquence `'\''`.
+fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 /// Tente de lancer une commande dans un émulateur de terminal courant.

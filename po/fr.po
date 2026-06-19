@@ -373,3 +373,105 @@ msgstr "  — suggestions (paquets AUR installés) —"
 
 msgid " whitelist ({}) · suggestions ({}) "
 msgstr " whitelist ({}) · suggestions ({}) "
+
+#: src/deploy.rs
+msgid "msgfmt failed for locale {}"
+msgstr "échec de msgfmt pour la locale {}"
+
+msgid "msgfmt not found — skipping translations"
+msgstr "msgfmt introuvable — traductions ignorées"
+
+msgid "systemctl --user {} failed"
+msgstr "échec de systemctl --user {}"
+
+msgid "systemctl not found — notification timer not applied"
+msgstr "systemctl introuvable — timer de notification non appliqué"
+
+msgid "{} repo + {} AUR (aur-guard upgrade)"
+msgstr "{} dépôts + {} AUR (aur-guard upgrade)"
+
+#: src/main.rs
+msgid "Desktop entry and icon installed."
+msgstr "Entrée de bureau et icône installées."
+
+msgid "Translations installed."
+msgstr "Traductions installées."
+
+msgid "Notification timer enabled (every {}h)."
+msgstr "Timer de notification activé (toutes les {} h)."
+
+msgid "Notification timer installed but disabled (enable it in settings)."
+msgstr "Timer de notification installé mais désactivé (activez-le dans les réglages)."
+
+#: src/bin/gui.rs src/tui.rs
+msgid "Notifications"
+msgstr "Notifications"
+
+msgid "Periodic desktop notification of pending updates"
+msgstr "Notification de bureau périodique des mises à jour en attente"
+
+msgid "Enable notifications"
+msgstr "Activer les notifications"
+
+msgid "Check interval (hours)"
+msgstr "Intervalle de vérification (heures)"
+
+msgid "Silent when up to date"
+msgstr "Silencieux quand le système est à jour"
+
+msgid "Notification setup error: {}"
+msgstr "Erreur de configuration des notifications : {}"
+
+msgid "Notify interval"
+msgstr "Intervalle de notification"
+
+msgid "{} hours"
+msgstr "{} heures"
+
+msgid "Saved, but notification setup failed: {}"
+msgstr "Enregistré, mais la configuration des notifications a échoué : {}"
+
+msgid "Binaries installed in ~/.local/bin."
+msgstr "Binaires installés dans ~/.local/bin."
+
+msgid "GUI binary not found — desktop entry skipped (build with `--features gui`)."
+msgstr "Binaire GUI introuvable — entrée de menu ignorée (compilez avec `--features gui`)."
+
+msgid "Test notification — if you see this, notifications work."
+msgstr "Notification de test — si vous voyez ceci, les notifications fonctionnent."
+
+msgid "Test notification"
+msgstr "Notification de test"
+
+msgid "Send one right now to check it works"
+msgstr "En envoyer une tout de suite pour vérifier"
+
+msgid "Send"
+msgstr "Envoyer"
+
+msgid "[Enter to send]"
+msgstr "[Entrée pour envoyer]"
+
+msgid "Test notification sent"
+msgstr "Notification de test envoyée"
+
+msgid "Update selection"
+msgstr "Mettre à jour la sélection"
+
+msgid "Install only the checked AUR packages"
+msgstr "Installer uniquement les paquets AUR cochés"
+
+msgid "Include in the selective update"
+msgstr "Inclure dans la mise à jour sélective"
+
+msgid "Select at least one package first"
+msgstr "Sélectionnez d'abord au moins un paquet"
+
+msgid "Selective update started in a terminal"
+msgstr "Mise à jour sélective lancée dans un terminal"
+
+msgid "Skipping {} — not cleared by the security chain (see report above)"
+msgstr "Ignoré {} — non validé par la chaîne de sécurité (voir le rapport ci-dessus)"
+
+msgid "Skipping {} — no pending update"
+msgstr "Ignoré {} — aucune mise à jour en attente"

@@ -30,6 +30,9 @@ enum Cmd {
     Check,
     /// Install AUR packages judged safe (does not touch official repos).
     Apply {
+        /// Restrict to these package names (a subset of those cleared for
+        /// install). Empty = install everything the chain cleared.
+        packages: Vec<String>,
         /// Do not install; only show the command that would run.
         #[arg(long)]
         dry_run: bool,
@@ -40,8 +43,15 @@ enum Cmd {
     Status,
     /// Show the config file path (and create it if missing).
     Config,
-    /// Hook aur-guard into the checkupdates-notify systemd service.
-    InstallHook,
+    /// Install the desktop entry, icon, translations and notification timer.
+    Install,
+    /// (internal) Emit a desktop notification of pending updates (run by the timer).
+    #[command(hide = true)]
+    Notify {
+        /// Send a fixed test notification instead of the real update summary.
+        #[arg(long)]
+        test: bool,
+    },
     /// (debug) Run the AI review on a local PKGBUILD file.
     ReviewFile {
         /// Path of the PKGBUILD (or diff) to analyse.
@@ -71,11 +81,20 @@ fn run() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd.unwrap_or(Cmd::Check) {
         Cmd::Check => cmd_check(),
-        Cmd::Apply { dry_run } => cmd_apply(dry_run),
+        Cmd::Apply { dry_run, packages } => cmd_apply(dry_run, &packages),
         Cmd::Upgrade => cmd_upgrade(),
         Cmd::Status => cmd_status(),
         Cmd::Config => cmd_config(),
-        Cmd::InstallHook => cmd_install_hook(),
+        Cmd::Install => cmd_install(),
+        Cmd::Notify { test } => {
+            if test {
+                aur_guard::deploy::send_test_notification();
+                Ok(())
+            } else {
+                let cfg = config::Config::load_or_init()?;
+                aur_guard::deploy::send_notification(&cfg)
+            }
+        }
         Cmd::ReviewFile { path } => cmd_review_file(&path),
         Cmd::RevertCheck { pkgbase, commit } => {
             match aur::reverted_since(&pkgbase, &commit)? {
@@ -122,18 +141,24 @@ fn cmd_check() -> Result<()> {
     Ok(())
 }
 
-/// Remind how many official-repo updates are pending (signed, out of scope).
+/// List the pending official-repo updates (signed, out of aur-guard's scope but
+/// shown for a complete picture). Each line is `name old -> new`.
 fn print_official_summary() {
-    let n = aur::official_updates().len();
-    if n > 0 {
-        println!(
-            "{}\n",
-            t!(
-                "Official repositories: {} signed updates (handled by `aur-guard upgrade`)",
-                n
-            )
-        );
+    let updates = aur::official_updates();
+    if updates.is_empty() {
+        return;
     }
+    println!(
+        "{}",
+        t!(
+            "Official repositories: {} signed updates (handled by `aur-guard upgrade`)",
+            updates.len()
+        )
+    );
+    for line in &updates {
+        println!("  {line}");
+    }
+    println!();
 }
 
 /// Update the official repos then the safe AUR packages.
@@ -147,18 +172,55 @@ fn cmd_upgrade() -> Result<()> {
         "\n=== {} ===",
         t!("AUR packages (aur-guard security chain)")
     );
-    cmd_apply(false)
+    cmd_apply(false, &[])
 }
 
-fn cmd_apply(dry_run: bool) -> Result<()> {
+/// Restricts the cleared set to the explicitly requested package names.
+///
+/// Selection only ever *narrows* what the decision chain already cleared: a
+/// requested package the chain did not allow (delayed, blocked, or not even a
+/// pending update) is reported and skipped — never forced. Fail-closed.
+fn select_requested<'a>(
+    outcomes: &'a [Outcome],
+    allow: Vec<&'a Outcome>,
+    requested: &[String],
+) -> Vec<&'a Outcome> {
+    requested
+        .iter()
+        .filter_map(|name| {
+            if let Some(o) = allow.iter().find(|o| &o.update.name == name) {
+                Some(*o)
+            } else {
+                let known = outcomes.iter().any(|o| &o.update.name == name);
+                if known {
+                    eprintln!(
+                        "{}",
+                        t!(
+                            "Skipping {} — not cleared by the security chain (see report above)",
+                            name
+                        )
+                    );
+                } else {
+                    eprintln!("{}", t!("Skipping {} — no pending update", name));
+                }
+                None
+            }
+        })
+        .collect()
+}
+
+fn cmd_apply(dry_run: bool, only: &[String]) -> Result<()> {
     let cfg = config::Config::load_or_init()?;
     let outcomes = pipeline::evaluate(&cfg)?;
     print_report(&cfg, &outcomes);
 
-    let allow: Vec<&Outcome> = outcomes
+    let mut allow: Vec<&Outcome> = outcomes
         .iter()
         .filter(|o| o.decision == Decision::Allow)
         .collect();
+    if !only.is_empty() {
+        allow = select_requested(&outcomes, allow, only);
+    }
     if allow.is_empty() {
         println!("\n{}", t!("Nothing to install."));
         return Ok(());
@@ -300,39 +362,44 @@ fn cmd_config() -> Result<()> {
     Ok(())
 }
 
-fn cmd_install_hook() -> Result<()> {
-    let base = dirs::config_dir().ok_or_else(|| anyhow::anyhow!("~/.config not found"))?;
-    let svc = base.join("systemd/user/checkupdates-notify.service");
-    let exe = std::env::current_exe()
-        .ok()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| "aur-guard".to_string());
+/// Install desktop integration: menu entry, icon, translations and the
+/// notification timer (its active state follows `config.notify.enabled`).
+fn cmd_install() -> Result<()> {
+    let cfg = config::Config::load_or_init()?;
 
-    // Notification text is baked in the installer's language.
-    let title_up = t!("Updates available");
-    let title_ok = t!("System up to date");
-    let body_ok = t!("No updates");
-    let content = format!(
-        "[Unit]\n\
-         Description=Notify available system updates (aur-guard)\n\n\
-         [Service]\n\
-         Type=oneshot\n\
-         ExecStart=/bin/bash -c 'updates=$(checkupdates 2>/dev/null | wc -l); \
-         aur=$({exe} check 2>/dev/null | grep -c \"✅\"); \
-         if [ \"$updates\" -gt 0 ] || [ \"$aur\" -gt 0 ]; then \
-         notify-send -u normal \"{title_up}\" \
-         \"$updates repo + $aur AUR (aur-guard upgrade)\"; \
-         else notify-send -u low \"{title_ok}\" \"{body_ok}\"; fi'\n"
-    );
+    let gui_available = aur_guard::deploy::install_binaries()?;
+    println!("{}", t!("Binaries installed in ~/.local/bin."));
 
-    if svc.exists() {
-        let backup = svc.with_extension("service.bak");
-        std::fs::copy(&svc, &backup)?;
-        println!("{}", t!("Backup: {}", backup.display()));
+    // L'entrée de menu lance la GUI : ne la poser que si la GUI est disponible,
+    // sinon le raccourci pointerait dans le vide.
+    if gui_available {
+        aur_guard::deploy::install_desktop_entry()?;
+        println!("{}", t!("Desktop entry and icon installed."));
+    } else {
+        println!(
+            "{}",
+            t!("GUI binary not found — desktop entry skipped (build with `--features gui`).")
+        );
     }
-    std::fs::write(&svc, content)?;
-    println!("{}", t!("Service updated: {}", svc.display()));
-    println!("{}", t!("Reload with: systemctl --user daemon-reload"));
+
+    aur_guard::deploy::install_locales()?;
+    println!("{}", t!("Translations installed."));
+
+    aur_guard::deploy::apply_notify(&cfg.notify)?;
+    if cfg.notify.enabled {
+        println!(
+            "{}",
+            t!(
+                "Notification timer enabled (every {}h).",
+                cfg.notify.interval_hours
+            )
+        );
+    } else {
+        println!(
+            "{}",
+            t!("Notification timer installed but disabled (enable it in settings).")
+        );
+    }
     Ok(())
 }
 
