@@ -33,19 +33,19 @@ donnée AUR, il appelle une fonction de `aur`, il ne construit pas d'URL.
 ## Commandes
 
 ```bash
-cargo build                              # CLI + TUI (features par défaut)
-cargo build --features gui               # + GUI (gtk4 + libadwaita ≥ 1.4)
-cargo build --no-default-features        # cœur + CLI seuls (doit compiler)
+cargo build                                       # CLI + TUI + GUI (défaut, gtk4 + libadwaita ≥ 1.4)
+cargo build --no-default-features --features tui  # CLI + TUI, sans GUI
+cargo build --no-default-features                 # cœur + CLI seuls (doit compiler)
 cargo fmt
-cargo clippy --all-targets --features gui
+cargo clippy --all-targets
 ```
 
 ## Règles de code (obligatoires)
 
 ### Qualité — porte d'entrée avant tout commit
-- `cargo fmt` appliqué, `cargo clippy --all-targets --features gui` **sans aucun
-  warning**, et les trois combinaisons de features ci-dessus compilent. Un commit
-  qui n'est pas fmt+clippy clean n'est pas prêt.
+- `cargo fmt` appliqué, `cargo clippy --all-targets` **sans aucun warning**, et
+  les trois combinaisons de features ci-dessus compilent. Un commit qui n'est pas
+  fmt+clippy clean n'est pas prêt.
 
 ### DRY — n'écris pas deux fois la même logique
 - Factorise dès la **règle de trois** (3ᵉ duplication). Exemples en place à

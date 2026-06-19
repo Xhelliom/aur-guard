@@ -1,6 +1,6 @@
 [package]
 name = "aur-guard"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Garde-fou de sécurité pour les mises à jour AUR : délai, whitelist, scan statique et review IA du diff PKGBUILD"
 license = "MIT"
@@ -20,7 +20,7 @@ path = "src/bin/gui.rs"
 required-features = ["gui"]
 
 [features]
-default = ["tui"]
+default = ["tui", "gui"]
 tui = ["dep:ratatui", "dep:crossterm"]
 gui = ["dep:gtk4", "dep:libadwaita", "dep:async-channel"]
 

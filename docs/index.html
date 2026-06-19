@@ -264,17 +264,15 @@ AUR updates: 5 (delay 14d, AI review enabled)
 <section id="install">
   <div class="container">
     <h2 class="section-title reveal">Install</h2>
-    <p class="section-sub reveal">Requires Rust, an AUR helper (yay/paru) and — optionally — <code>aur-scan</code> for the static layer.</p>
+    <p class="section-sub reveal">Requires Rust, an AUR helper (yay/paru) and — optionally — <code>aur-scan</code> for the static layer. One <code>aur-guard install</code> drops the binaries, a desktop entry and an optional update-notification timer into place.</p>
     <div class="install-card reveal">
 <div class="code"><span class="c"># clone &amp; build</span>
 git clone https://github.com/Xhelliom/aur-guard
 cd aur-guard
-cargo build <span class="a">--release --features gui</span>
+cargo build <span class="a">--release</span>
 
-<span class="c"># install binaries + translations</span>
-install -Dm755 target/release/aur-guard      ~/.local/bin/aur-guard
-install -Dm755 target/release/aur-guard-gui  ~/.local/bin/aur-guard-gui
-po/install.sh
+<span class="c"># one-stop: binaries, menu entry, icon, translations, notify timer</span>
+./target/release/aur-guard <span class="a">install</span>
 
 <span class="c"># use it</span>
 aur-guard check          <span class="c"># report — installs nothing</span>

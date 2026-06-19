@@ -3,7 +3,7 @@
 //! enregistre. Les clés API vont dans le fichier de secrets, pas dans la config.
 
 use crate::config::{Config, DelayMode, Provider, Secrets};
-use crate::{aur, t};
+use crate::{aur, deploy, t};
 use anyhow::Result;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
@@ -30,12 +30,19 @@ const F_PROVIDER: usize = 5;
 const F_MODEL: usize = 6;
 const F_APIKEY: usize = 7;
 const F_VOTES: usize = 8;
-const F_WHITELIST: usize = 9;
-const FIELDS: usize = 10;
+const F_NOTIFY: usize = 9;
+const F_NOTIFY_INTERVAL: usize = 10;
+const F_NOTIFY_SILENT: usize = 11;
+const F_NOTIFY_TEST: usize = 12;
+const F_WHITELIST: usize = 13;
+const FIELDS: usize = 14;
 
 const DELAY_MAX: u64 = 365;
 const VOTES_MIN: u32 = 1;
 const VOTES_MAX: u32 = 9;
+/// Bornes de l'intervalle de notification (heures) : 1 h à une semaine.
+const NOTIFY_INTERVAL_MIN: u64 = 1;
+const NOTIFY_INTERVAL_MAX: u64 = 168;
 
 #[derive(PartialEq)]
 enum Screen {
@@ -105,6 +112,15 @@ impl App {
                 let v = self.cfg.ai.confirm_votes as i64 + delta;
                 self.cfg.ai.confirm_votes = v.clamp(VOTES_MIN as i64, VOTES_MAX as i64) as u32;
             }
+            F_NOTIFY => self.cfg.notify.enabled = !self.cfg.notify.enabled,
+            F_NOTIFY_INTERVAL => {
+                let v = self.cfg.notify.interval_hours as i64 + delta;
+                self.cfg.notify.interval_hours =
+                    v.clamp(NOTIFY_INTERVAL_MIN as i64, NOTIFY_INTERVAL_MAX as i64) as u64;
+            }
+            F_NOTIFY_SILENT => {
+                self.cfg.notify.silent_when_up_to_date = !self.cfg.notify.silent_when_up_to_date;
+            }
             _ => {}
         }
         self.dirty = true;
@@ -124,6 +140,16 @@ impl App {
                 t!("Confirmation votes"),
                 self.cfg.ai.confirm_votes.to_string(),
             ),
+            (t!("Notifications"), onoff(self.cfg.notify.enabled)),
+            (
+                t!("Notify interval"),
+                t!("{} hours", self.cfg.notify.interval_hours),
+            ),
+            (
+                t!("Silent when up to date"),
+                onoff(self.cfg.notify.silent_when_up_to_date),
+            ),
+            (t!("Test notification"), t!("[Enter to send]")),
             (
                 t!("Whitelist"),
                 t!("{} packages ▸", self.cfg.whitelist.len()),
@@ -264,6 +290,10 @@ fn main_keys(app: &mut App, code: KeyCode) -> bool {
                     app.cfg.ai.provider.default_key_env()
                 );
             }
+            F_NOTIFY_TEST => {
+                deploy::send_test_notification();
+                app.status = t!("Test notification sent");
+            }
             _ => {}
         },
         KeyCode::Char('s') => save(app),
@@ -368,7 +398,11 @@ fn save(app: &mut App) {
     app.status = match app.cfg.save() {
         Ok(_) => {
             app.dirty = false;
-            t!("✔ Configuration saved")
+            // Synchronise le timer systemd de notification avec les réglages.
+            match deploy::apply_notify(&app.cfg.notify) {
+                Ok(_) => t!("✔ Configuration saved"),
+                Err(e) => t!("Saved, but notification setup failed: {}", e),
+            }
         }
         Err(e) => t!("Save error: {}", e),
     };

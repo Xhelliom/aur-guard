@@ -117,6 +117,38 @@ fn default_delay_mode() -> DelayMode {
     DelayMode::Lag
 }
 
+/// Intervalle de notification par défaut (heures) : compromis entre fraîcheur
+/// de l'info et discrétion.
+fn default_notify_interval() -> u64 {
+    6
+}
+
+/// Réglages des notifications de bureau (timer systemd `--user`).
+///
+/// Le timer exécute `aur-guard notify`, qui compte les mises à jour officielles
+/// et AUR disponibles (sans review IA, donc sans coût) et appelle `notify-send`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotifyConfig {
+    /// Le timer de notification doit-il être actif.
+    pub enabled: bool,
+    /// Périodicité de la vérification, en heures.
+    #[serde(default = "default_notify_interval")]
+    pub interval_hours: u64,
+    /// Ne rien notifier quand le système est à jour (sinon notification discrète).
+    #[serde(default)]
+    pub silent_when_up_to_date: bool,
+}
+
+impl Default for NotifyConfig {
+    fn default() -> Self {
+        NotifyConfig {
+            enabled: false,
+            interval_hours: default_notify_interval(),
+            silent_when_up_to_date: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     /// Nombre de jours pendant lesquels une maj fraîche est retardée.
@@ -132,6 +164,9 @@ pub struct Config {
     /// (La review IA / le scan statique s'appliquent quand même.)
     pub whitelist: Vec<String>,
     pub ai: AiConfig,
+    /// Réglages des notifications de bureau.
+    #[serde(default)]
+    pub notify: NotifyConfig,
 }
 
 impl Default for Config {
@@ -143,6 +178,7 @@ impl Default for Config {
             use_aur_scan: true,
             whitelist: recommended_whitelist(),
             ai: AiConfig::default(),
+            notify: NotifyConfig::default(),
         }
     }
 }
