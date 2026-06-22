@@ -28,6 +28,11 @@ pub struct Outcome {
     pub decision: Decision,
     /// En mode lag : la révision décalée à installer (None = dernière version).
     pub lag: Option<LagTarget>,
+    /// Pour un verdict `Delayed` dû à la fraîcheur : horodatage Unix (secondes)
+    /// auquel la dernière révision aura assez mûri pour devenir installable
+    /// (`last_modified + délai`). `None` quand l'échéance n'a pas de sens
+    /// (paquet VCS à version dynamique, erreur git) ou hors délai.
+    pub eligible_at: Option<u64>,
 }
 
 /// Évalue toutes les mises à jour disponibles selon la config.
@@ -72,7 +77,7 @@ fn evaluate_one(
                 .map(|i| now.saturating_sub(i.last_modified) < threshold)
                 .unwrap_or(false);
             if fresh {
-                return delayed(upd, age_days);
+                return delayed(upd, age_days, eligible_at(info, threshold));
             }
             decide_latest(cfg, upd, age_days, false)
         }
@@ -95,22 +100,26 @@ fn evaluate_lag(
     let before = now.saturating_sub(threshold);
 
     let target = match aur::lagged_target(&pkgbase, before) {
+        // Paquet trop jeune pour exister il y a N jours : il mûrira → datable.
+        Ok(None) => return delayed(upd, age_days, eligible_at(info, threshold)),
         Ok(Some(t)) => t,
-        Ok(None) => return delayed(upd, age_days), // paquet trop jeune
         Err(e) => {
+            // Erreur git transitoire : échéance inconnue.
             eprintln!("  (git indisponible pour {}: {e})", upd.name);
-            return delayed(upd, age_days);
+            return delayed(upd, age_days, None);
         }
     };
 
-    // Version dynamique (VCS) : le lag par révision n'a pas de sens.
+    // Version dynamique (VCS) : le lag par révision n'a pas de sens, donc pas
+    // d'échéance d'installation à annoncer.
     if target.version == aur::DYNAMIC_VERSION {
-        return delayed(upd, age_days);
+        return delayed(upd, age_days, None);
     }
 
-    // Sommes-nous déjà à jour (ou en avance) par rapport à la cible J-N ?
+    // Sommes-nous déjà à jour (ou en avance) par rapport à la cible J-N ? Si
+    // oui, la seule maj disponible est plus récente que le délai → datable.
     if vercmp(&target.version, &upd.old_ver) <= 0 {
-        return delayed(upd, age_days);
+        return delayed(upd, age_days, eligible_at(info, threshold));
     }
 
     // Garde : la révision cible a-t-elle été annulée/nettoyée depuis ? (Une
@@ -188,12 +197,23 @@ fn outcome(
         scan,
         decision,
         lag,
+        eligible_at: None,
     }
 }
 
-fn delayed(upd: Update, age_days: Option<u64>) -> Outcome {
+/// Échéance de maturation d'une révision : `last_modified + délai`, ou `None`
+/// si les métadonnées AUR manquent. Sert à annoncer « disponible le … ».
+fn eligible_at(info: Option<&PkgInfo>, threshold: u64) -> Option<u64> {
+    info.map(|i| i.last_modified + threshold)
+}
+
+/// Verdict « retardé ». `eligible_at` porte l'échéance quand le retard est dû à
+/// la fraîcheur (donc datable) ; `None` pour les retards non datables.
+fn delayed(upd: Update, age_days: Option<u64>, eligible_at: Option<u64>) -> Outcome {
     let decision = Decision::Delayed(age_days.unwrap_or(0));
-    outcome(upd, age_days, false, ScanResult::Skipped, None, decision)
+    let mut o = outcome(upd, age_days, false, ScanResult::Skipped, None, decision);
+    o.eligible_at = eligible_at;
+    o
 }
 
 /// Scan statique d'une révision lag : on écrit le PKGBUILD dans un fichier
@@ -285,6 +305,7 @@ mod tests {
             scan: ScanResult::Skipped,
             decision,
             lag: None,
+            eligible_at: None,
         }
     }
 
