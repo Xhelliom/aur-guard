@@ -274,6 +274,78 @@ msgstr "Retardé — modifié il y a {}j"
 msgid "BLOCKED — {}"
 msgstr "BLOQUÉ — {}"
 
+msgid "Everything is up to date."
+msgstr "Tout est à jour."
+
+msgid "Official"
+msgstr "Officiels"
+
+msgid "To install"
+msgstr "À installer"
+
+msgid "On hold"
+msgstr "En attente"
+
+msgid "Blocked"
+msgstr "Bloqués"
+
+msgid "Latest"
+msgstr "Dernière version"
+
+msgid "Deferred"
+msgstr "Décalés"
+
+msgid "Official repositories (signed)"
+msgstr "Dépôts officiels (signés)"
+
+msgid "revision {}d old"
+msgstr "révision vieille de {}j"
+
+msgid "revision age unknown"
+msgstr "âge de la révision inconnu"
+
+msgid "New AUR updates will be offered after {}d of maturation (lag mode)."
+msgstr "Les nouvelles mises à jour AUR seront proposées après {}j de maturation (mode lag)."
+
+msgid "New AUR updates are held for {}d before being offered (hold mode)."
+msgstr "Les nouvelles mises à jour AUR sont bloquées {}j avant d'être proposées (mode hold)."
+
+msgid "On hold — {}, available on {} (in ~{}d) — {}"
+msgstr "En attente — {}, disponible le {} (dans ~{}j) — {}"
+
+msgid "On hold — {} — {}"
+msgstr "En attente — {} — {}"
+
+msgid "latest published {}d ago"
+msgstr "dernière publiée il y a {}j"
+
+msgid "latest {} published {}d ago"
+msgstr "dernière {} publiée il y a {}j"
+
+msgid "latest {}"
+msgstr "dernière {}"
+
+msgid "current {}"
+msgstr "actuelle {}"
+
+msgid "whitelisted"
+msgstr "whitelist"
+
+msgid "available on {}"
+msgstr "disponible le {}"
+
+msgid "to install"
+msgstr "à installer"
+
+msgid "on hold"
+msgstr "en attente"
+
+msgid "blocked"
+msgstr "bloqué"
+
+msgid "~{}d"
+msgstr "~{}j"
+
 msgid "Press Enter to close…"
 msgstr "Entrée pour fermer…"
 

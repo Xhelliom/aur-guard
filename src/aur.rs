@@ -236,6 +236,9 @@ pub struct LagTarget {
     pub commit: String,
     /// Version (epoch:pkgver-pkgrel) à ce commit, ou "?" si dynamique (VCS).
     pub version: String,
+    /// Horodatage Unix (secondes) du commit cible : permet d'afficher l'âge réel
+    /// de la révision qui sera installée. 0 si la date n'a pas pu être lue.
+    pub committed_at: u64,
     /// Contenu du PKGBUILD à ce commit (pour la review).
     pub pkgbuild: String,
 }
@@ -299,10 +302,16 @@ pub fn lagged_target(pkgbase: &str, before_epoch: u64) -> Result<Option<LagTarge
     }
     let pkgbuild = run_git(&dir, &["show", &format!("{commit}:PKGBUILD")]).unwrap_or_default();
     let version = parse_version(&pkgbuild);
+    // Date du commit cible : `%ct` = horodatage Unix du committer.
+    let committed_at = run_git(&dir, &["show", "-s", "--format=%ct", &commit])
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or(0);
     Ok(Some(LagTarget {
         pkgbase: pkgbase.to_string(),
         commit,
         version,
+        committed_at,
         pkgbuild,
     }))
 }
@@ -348,6 +357,83 @@ pub fn install_lagged(target: &LagTarget) -> Result<bool> {
     let _ = run_git(&dir, &["checkout", "--quiet", "origin/HEAD"])
         .or_else(|_| run_git(&dir, &["checkout", "--quiet", "master"]));
     Ok(status.success())
+}
+
+/// Compare deux versions via l'outil `vercmp` de pacman.
+/// Renvoie >0 si `a` est strictement plus récent que `b`, 0 si égal, <0 sinon.
+///
+/// Fail-closed : si `vercmp` est indisponible ou sa sortie illisible, renvoie une
+/// valeur négative — jamais « plus récent ». Aucun appelant ne considère donc une
+/// version comme installable faute de comparaison fiable.
+pub fn vercmp(a: &str, b: &str) -> i32 {
+    match Command::new("vercmp").args([a, b]).output() {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
+            .trim()
+            .parse()
+            .unwrap_or(-1),
+        _ => {
+            eprintln!(
+                "  (vercmp indisponible : comparaison de versions impossible, mise à jour ignorée)"
+            );
+            -1
+        }
+    }
+}
+
+/// Nombre maximum de commits inspectés en remontant l'historique pour dater la
+/// prochaine révision installable (borne le coût sur un paquet à long historique).
+const MAX_UPGRADE_SCAN: usize = 200;
+
+/// Prochaine révision lag installable : la PLUS ANCIENNE plus récente que la
+/// version installée. C'est elle qui mûrira en premier et sera réellement posée.
+#[derive(Debug, Clone)]
+pub struct NextUpgrade {
+    /// Date de commit (Unix s) : l'échéance = `committed_at + délai`.
+    pub committed_at: u64,
+    /// Version de cette révision (ce qui sera installé à l'échéance).
+    pub version: String,
+}
+
+/// Prochaine révision strictement plus récente que `installed` dans l'historique
+/// git (la plus ancienne du lot), avec sa date et sa version. `None` si rien
+/// n'est plus récent.
+///
+/// Contrairement à `last_modified` (qui suit la *dernière* publication et repart
+/// à zéro à chaque nouveau commit), cette donnée est ancrée sur un commit précis :
+/// une publication ultérieure ne repousse pas une échéance déjà acquise, et la
+/// version annoncée est bien celle qui sera posée. Réutilise le dépôt git déjà
+/// présent (pas de fetch) ; appelée après `lagged_target`.
+pub fn next_upgrade(pkgbase: &str, installed: &str) -> Result<Option<NextUpgrade>> {
+    let dir = aur_cache_dir()?.join(pkgbase);
+    if !dir.join(".git").exists() {
+        ensure_git_repo(pkgbase)?;
+    }
+    // Commits du plus récent au plus ancien, avec leur date de commit (%ct).
+    let log = run_git(&dir, &["log", "--format=%H %ct", "origin/HEAD"])
+        .or_else(|_| run_git(&dir, &["log", "--format=%H %ct", "master"]))?;
+
+    let mut candidate = None;
+    for line in log.lines().take(MAX_UPGRADE_SCAN) {
+        let mut parts = line.split_whitespace();
+        let (Some(commit), Some(ts)) = (parts.next(), parts.next()) else {
+            continue;
+        };
+        let pkgbuild = run_git(&dir, &["show", &format!("{commit}:PKGBUILD")]).unwrap_or_default();
+        let version = parse_version(&pkgbuild);
+        if version == DYNAMIC_VERSION {
+            continue; // révision VCS : pas de version comparable
+        }
+        if vercmp(&version, installed) > 0 {
+            // On descend : on retient à chaque fois la révision la plus ancienne.
+            candidate = ts.parse::<u64>().ok().map(|committed_at| NextUpgrade {
+                committed_at,
+                version,
+            });
+        } else {
+            break; // on a rejoint la version installée (ou antérieure)
+        }
+    }
+    Ok(candidate)
 }
 
 /// Motifs d'exécution de code distant / reverse shell dans un PKGBUILD.
