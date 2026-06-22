@@ -304,6 +304,18 @@ msgstr "révision vieille de {}j"
 msgid "revision age unknown"
 msgstr "âge de la révision inconnu"
 
+msgid "New AUR updates will be offered after {}d of maturation (lag mode)."
+msgstr "Les nouvelles mises à jour AUR seront proposées après {}j de maturation (mode lag)."
+
+msgid "New AUR updates are held for {}d before being offered (hold mode)."
+msgstr "Les nouvelles mises à jour AUR sont bloquées {}j avant d'être proposées (mode hold)."
+
+msgid "On hold — available on {} (in ~{}d) · {}"
+msgstr "En attente — disponible le {} (dans ~{}j) · {}"
+
+msgid "On hold · {}"
+msgstr "En attente · {}"
+
 msgid "Press Enter to close…"
 msgstr "Entrée pour fermer…"
 

@@ -218,6 +218,7 @@ fn wire_check(
             let _ = tx.send_blocking(res);
         });
 
+        let cfg = cfg.clone();
         let dashboard = dashboard.clone();
         let results = results.clone();
         let selected = selected.clone();
@@ -228,7 +229,13 @@ fn wire_check(
                 match res {
                     Ok((official, outcomes)) => {
                         render(
-                            &dashboard, &results, &official, &outcomes, &selected, &apply_btn,
+                            &cfg.borrow(),
+                            &dashboard,
+                            &results,
+                            &official,
+                            &outcomes,
+                            &selected,
+                            &apply_btn,
                         );
                     }
                     Err(e) => results.append(&info_row(&t!("Error: {}", e))),
@@ -244,6 +251,7 @@ fn wire_check(
 /// verdicts. Toute la décision est déjà prise par `pipeline` ; on ne fait que
 /// présenter et regrouper.
 fn render(
+    cfg: &Config,
     dashboard: &gtk::Box,
     results: &gtk::ListBox,
     official: &[String],
@@ -256,7 +264,7 @@ fn render(
     selected.borrow_mut().clear();
 
     if official.is_empty() && outcomes.is_empty() {
-        results.append(&info_row(&t!("Everything is up to date.")));
+        results.append(&up_to_date_row(cfg));
         apply_btn.set_sensitive(false);
         return;
     }
@@ -926,6 +934,39 @@ fn info_row(text: &str) -> adw::ActionRow {
     adw::ActionRow::builder().title(text).build()
 }
 
+/// Ligne « rien à faire » : confirme que tout est à jour ET, en sous-titre,
+/// rappelle la politique de maturation — pour qu'un nouvel utilisateur comprenne
+/// que de futures maj seront proposées plus tard, pas absentes.
+fn up_to_date_row(cfg: &Config) -> adw::ActionRow {
+    let row = adw::ActionRow::builder()
+        .title(t!("Everything is up to date."))
+        .build();
+    if cfg.delay_days > 0 {
+        let policy = match cfg.delay_mode {
+            DelayMode::Lag => t!(
+                "New AUR updates will be offered after {}d of maturation (lag mode).",
+                cfg.delay_days
+            ),
+            DelayMode::Hold => t!(
+                "New AUR updates are held for {}d before being offered (hold mode).",
+                cfg.delay_days
+            ),
+        };
+        row.set_subtitle(&policy);
+        row.set_subtitle_lines(0); // pas de troncature : le rappel doit se lire en entier
+    }
+    row.add_prefix(&gtk::Image::from_icon_name("emblem-ok-symbolic"));
+    row
+}
+
+/// Formate un horodatage Unix en date locale courte (via glib, sans dépendance).
+fn format_date(ts: u64) -> String {
+    glib::DateTime::from_unix_local(ts as i64)
+        .and_then(|d| d.format("%x"))
+        .map(|s| s.to_string())
+        .unwrap_or_default()
+}
+
 /// Libellé de l'âge de la révision décalée ciblée (date du commit cible).
 /// `committed_at == 0` signifie date illisible : on le signale plutôt que mentir.
 fn lag_age_label(target: &aur::LagTarget) -> String {
@@ -936,45 +977,87 @@ fn lag_age_label(target: &aur::LagTarget) -> String {
     t!("revision {}d old", age)
 }
 
+/// Suffixe « ancienne → nouvelle » (versions seules, sans mot traduisible).
+/// Vide si l'une des deux manque.
+fn plain_versions(o: &Outcome) -> String {
+    if !o.update.old_ver.is_empty() && !o.update.new_ver.is_empty() {
+        format!("{} → {}", o.update.old_ver, o.update.new_ver)
+    } else {
+        String::new()
+    }
+}
+
+/// Suffixe versions pour un paquet autorisé : en mode lag, montre la version
+/// cible ET l'âge réel de la révision installée.
+fn installed_versions(o: &Outcome) -> String {
+    match &o.lag {
+        Some(target) if o.update.old_ver.is_empty() => {
+            format!("→ {}, {}", target.version, lag_age_label(target))
+        }
+        Some(target) => format!(
+            "{} → {}, {}",
+            o.update.old_ver,
+            target.version,
+            lag_age_label(target)
+        ),
+        None => plain_versions(o),
+    }
+}
+
+/// Accole un libellé et un suffixe versions entre parenthèses (suffixe vide → libellé seul).
+fn join_label(label: &str, versions: &str) -> String {
+    if versions.is_empty() {
+        label.to_string()
+    } else {
+        format!("{label}  ({versions})")
+    }
+}
+
+/// Sous-titre d'un paquet retardé : annonce explicitement la date d'arrivée
+/// (« disponible le … (dans ~N j) ») quand elle est connue, sinon retombe sur
+/// l'âge de la dernière modif. C'est ce qui rend la maturation lisible.
+fn delayed_subtitle(o: &Outcome, days_since_mod: u64, now: u64) -> String {
+    let modified = t!("modified {}d ago", days_since_mod);
+    let tail = join_label(&modified, &plain_versions(o));
+    match o.eligible_at {
+        Some(ts) if ts > now => {
+            let days = ts.saturating_sub(now).div_ceil(aur::SECS_PER_DAY);
+            t!(
+                "On hold — available on {} (in ~{}d) · {}",
+                format_date(ts),
+                days,
+                tail
+            )
+        }
+        _ => t!("On hold · {}", tail),
+    }
+}
+
 fn outcome_row(o: &Outcome) -> adw::ActionRow {
-    let (icon, label) = match &o.decision {
+    let now = aur::now_secs();
+    let (icon, subtitle) = match &o.decision {
         Decision::Allow => {
-            let s = if o.whitelisted {
+            let label = if o.whitelisted {
                 t!("Allowed (whitelist)")
             } else {
                 t!("Allowed")
             };
-            ("emblem-ok-symbolic", s)
+            (
+                "emblem-ok-symbolic",
+                join_label(&label, &installed_versions(o)),
+            )
         }
-        Decision::Delayed(d) => (
-            "appointment-soon-symbolic",
-            t!("Delayed — modified {}d ago", d),
+        Decision::Delayed(d) => ("appointment-soon-symbolic", delayed_subtitle(o, *d, now)),
+        Decision::Blocked(reason) => (
+            "dialog-warning-symbolic",
+            join_label(&t!("BLOCKED — {}", reason), &plain_versions(o)),
         ),
-        Decision::Blocked(reason) => ("dialog-warning-symbolic", t!("BLOCKED — {}", reason)),
-    };
-    let subtitle = match &o.lag {
-        // Mode lag : on installe une révision passée — on affiche sa version
-        // cible ET son âge réel, pour rendre visible « vieille de 2 semaines ».
-        Some(target) => {
-            let aged = lag_age_label(target);
-            if o.update.old_ver.is_empty() {
-                format!("{}  (→ {}, {})", label, target.version, aged)
-            } else {
-                format!(
-                    "{}  ({} → {}, {})",
-                    label, o.update.old_ver, target.version, aged
-                )
-            }
-        }
-        None => match (o.update.old_ver.is_empty(), o.update.new_ver.is_empty()) {
-            (false, false) => format!("{}  ({} → {})", label, o.update.old_ver, o.update.new_ver),
-            _ => label,
-        },
     };
     let row = adw::ActionRow::builder()
         .title(&o.update.name)
         .subtitle(&subtitle)
         .build();
+    row.set_subtitle_lines(0); // sous-titre riche (date + versions) : ne pas tronquer
     row.add_prefix(&gtk::Image::from_icon_name(icon));
     row
 }
