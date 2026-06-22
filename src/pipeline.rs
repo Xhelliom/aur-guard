@@ -7,7 +7,6 @@ use crate::config::{Config, DelayMode};
 use crate::scan::{self, ScanResult};
 use anyhow::Result;
 use std::collections::HashMap;
-use std::process::Command;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decision {
@@ -28,11 +27,13 @@ pub struct Outcome {
     pub decision: Decision,
     /// En mode lag : la révision décalée à installer (None = dernière version).
     pub lag: Option<LagTarget>,
-    /// Pour un verdict `Delayed` dû à la fraîcheur : horodatage Unix (secondes)
-    /// auquel la dernière révision aura assez mûri pour devenir installable
-    /// (`last_modified + délai`). `None` quand l'échéance n'a pas de sens
-    /// (paquet VCS à version dynamique, erreur git) ou hors délai.
+    /// Pour un verdict `Delayed` datable : horodatage Unix (secondes) auquel la
+    /// prochaine révision aura assez mûri pour devenir installable. `None` quand
+    /// l'échéance n'a pas de sens (paquet VCS, erreur git) ou hors délai.
     pub eligible_at: Option<u64>,
+    /// Version qui sera réellement installée à `eligible_at` (en mode lag, la
+    /// révision qui mûrit — pas forcément la dernière publiée). `None` si inconnue.
+    pub eligible_version: Option<String>,
 }
 
 /// Évalue toutes les mises à jour disponibles selon la config.
@@ -77,7 +78,7 @@ fn evaluate_one(
                 .map(|i| now.saturating_sub(i.last_modified) < threshold)
                 .unwrap_or(false);
             if fresh {
-                return delayed(upd, age_days, eligible_at(info, threshold));
+                return delayed(upd, age_days, (eligible_at(info, threshold), None));
             }
             decide_latest(cfg, upd, age_days, false)
         }
@@ -101,25 +102,29 @@ fn evaluate_lag(
 
     let target = match aur::lagged_target(&pkgbase, before) {
         // Paquet trop jeune pour exister il y a N jours : il mûrira → datable.
-        Ok(None) => return delayed(upd, age_days, eligible_at(info, threshold)),
+        Ok(None) => {
+            let elig = lag_eligible(&pkgbase, &upd.old_ver, threshold, info);
+            return delayed(upd, age_days, elig);
+        }
         Ok(Some(t)) => t,
         Err(e) => {
             // Erreur git transitoire : échéance inconnue.
             eprintln!("  (git indisponible pour {}: {e})", upd.name);
-            return delayed(upd, age_days, None);
+            return delayed(upd, age_days, (None, None));
         }
     };
 
     // Version dynamique (VCS) : le lag par révision n'a pas de sens, donc pas
     // d'échéance d'installation à annoncer.
     if target.version == aur::DYNAMIC_VERSION {
-        return delayed(upd, age_days, None);
+        return delayed(upd, age_days, (None, None));
     }
 
     // Sommes-nous déjà à jour (ou en avance) par rapport à la cible J-N ? Si
     // oui, la seule maj disponible est plus récente que le délai → datable.
-    if vercmp(&target.version, &upd.old_ver) <= 0 {
-        return delayed(upd, age_days, eligible_at(info, threshold));
+    if aur::vercmp(&target.version, &upd.old_ver) <= 0 {
+        let elig = lag_eligible(&pkgbase, &upd.old_ver, threshold, info);
+        return delayed(upd, age_days, elig);
     }
 
     // Garde : la révision cible a-t-elle été annulée/nettoyée depuis ? (Une
@@ -198,21 +203,44 @@ fn outcome(
         decision,
         lag,
         eligible_at: None,
+        eligible_version: None,
     }
 }
 
-/// Échéance de maturation d'une révision : `last_modified + délai`, ou `None`
-/// si les métadonnées AUR manquent. Sert à annoncer « disponible le … ».
+/// Échéance basée sur la dernière publication : `last_modified + délai`, ou
+/// `None` si les métadonnées manquent. Correcte pour le mode **hold** (qui
+/// re-bloque à chaque nouvelle publication) et sert de repli en mode lag.
 fn eligible_at(info: Option<&PkgInfo>, threshold: u64) -> Option<u64> {
     info.map(|i| i.last_modified + threshold)
 }
 
-/// Verdict « retardé ». `eligible_at` porte l'échéance quand le retard est dû à
-/// la fraîcheur (donc datable) ; `None` pour les retards non datables.
-fn delayed(upd: Update, age_days: Option<u64>, eligible_at: Option<u64>) -> Outcome {
+/// Échéance en mode **lag**, ancrée sur l'historique git : `(date, version)` de
+/// la prochaine révision plus récente que `installed`, l'échéance étant
+/// `date + délai`. Robuste aux publications ultérieures (une nouvelle version ne
+/// repousse pas l'échéance déjà acquise) et annonce la version réellement posée.
+/// Repli sur `eligible_at` (sans version) si le git est indisponible.
+fn lag_eligible(
+    pkgbase: &str,
+    installed: &str,
+    threshold: u64,
+    info: Option<&PkgInfo>,
+) -> (Option<u64>, Option<String>) {
+    match aur::next_upgrade(pkgbase, installed) {
+        Ok(Some(nu)) => (Some(nu.committed_at + threshold), Some(nu.version)),
+        Ok(None) => (eligible_at(info, threshold), None),
+        Err(e) => {
+            eprintln!("  (historique git indisponible pour {pkgbase}: {e})");
+            (eligible_at(info, threshold), None)
+        }
+    }
+}
+
+/// Verdict « retardé ». `(eligible_at, eligible_version)` portent l'échéance et la
+/// version visée quand le retard est datable ; `(None, None)` sinon.
+fn delayed(upd: Update, age_days: Option<u64>, eligible: (Option<u64>, Option<String>)) -> Outcome {
     let decision = Decision::Delayed(age_days.unwrap_or(0));
     let mut o = outcome(upd, age_days, false, ScanResult::Skipped, None, decision);
-    o.eligible_at = eligible_at;
+    (o.eligible_at, o.eligible_version) = eligible;
     o
 }
 
@@ -229,28 +257,6 @@ fn scan_lagged(name: &str, pkgbuild: &str, enabled: bool) -> ScanResult {
     let res = scan::scan_pkgbuild_file(&path, enabled);
     let _ = std::fs::remove_file(&path);
     res
-}
-
-/// Compare deux versions via l'outil `vercmp` de pacman.
-/// Renvoie >0 si `a` est strictement plus récent que `b`, 0 si égal, <0 sinon.
-///
-/// Fail-closed : si `vercmp` est indisponible ou sa sortie illisible, on renvoie
-/// une valeur négative. Le mode lag ne considère donc jamais la cible comme plus
-/// récente faute de comparaison fiable → pas d'installation, donc aucun risque
-/// de rétrograder un paquet.
-fn vercmp(a: &str, b: &str) -> i32 {
-    match Command::new("vercmp").args([a, b]).output() {
-        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
-            .trim()
-            .parse()
-            .unwrap_or(-1),
-        _ => {
-            eprintln!(
-                "  (vercmp indisponible : comparaison de versions impossible, mise à jour ignorée)"
-            );
-            -1
-        }
-    }
 }
 
 /// Liste des noms autorisés (toutes décisions Allow confondues).
@@ -306,6 +312,7 @@ mod tests {
             decision,
             lag: None,
             eligible_at: None,
+            eligible_version: None,
         }
     }
 

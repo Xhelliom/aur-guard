@@ -1033,12 +1033,17 @@ fn join_label(label: &str, versions: &str) -> String {
 /// (actuelle → version qui mûrit, c.-à-d. la dernière publiée), la date d'arrivée
 /// et l'ancienneté de cette dernière version. Rend la maturation entièrement lisible.
 fn delayed_subtitle(o: &Outcome, days_since_mod: u64, now: u64) -> String {
-    // À l'échéance, la révision installable sera la dernière publiée à ce jour.
-    let target = if o.update.new_ver.is_empty() {
-        &o.update.old_ver
-    } else {
-        &o.update.new_ver
-    };
+    // Version réellement posée à l'échéance (révision qui mûrit) si connue ;
+    // sinon la dernière publiée, sinon l'installée (cas dégénéré).
+    let target = o
+        .eligible_version
+        .as_deref()
+        .filter(|v| !v.is_empty())
+        .unwrap_or(if o.update.new_ver.is_empty() {
+            &o.update.old_ver
+        } else {
+            &o.update.new_ver
+        });
     let from_to = if o.update.old_ver.is_empty() {
         format!("→ {target}")
     } else {
