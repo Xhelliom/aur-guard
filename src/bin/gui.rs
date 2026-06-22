@@ -34,6 +34,16 @@ const COLOR_LAG: Rgb = (0.20, 0.56, 0.85); // bleu — installé en révision d�
 const COLOR_DELAY: Rgb = (0.96, 0.55, 0.06); // orange — retardé
 const COLOR_BLOCK: Rgb = (0.88, 0.11, 0.14); // rouge — bloqué
 
+/// Styles des badges de statut : pilules colorées. On s'appuie sur les couleurs
+/// nommées de libadwaita (`@success_color`…) pour rester lisibles en thème clair
+/// comme sombre, sans coder de teinte en dur.
+const BADGE_CSS: &str = "\
+.ag-badge { border-radius: 12px; padding: 1px 9px; font-weight: bold; }
+.ag-badge.ag-ok   { background-color: alpha(@success_color, 0.15); color: @success_color; }
+.ag-badge.ag-warn { background-color: alpha(@warning_color, 0.15); color: @warning_color; }
+.ag-badge.ag-err  { background-color: alpha(@error_color, 0.15); color: @error_color; }
+";
+
 fn main() -> glib::ExitCode {
     aur_guard::i18n::init();
     let app = adw::Application::builder().application_id(APP_ID).build();
@@ -70,6 +80,7 @@ fn provider_name(p: Provider) -> &'static str {
 // =====================================================================
 
 fn build_ui(app: &adw::Application) {
+    install_css();
     let cfg = Rc::new(RefCell::new(Config::load_or_init().unwrap_or_default()));
 
     let window = adw::ApplicationWindow::builder()
@@ -934,6 +945,28 @@ fn info_row(text: &str) -> adw::ActionRow {
     adw::ActionRow::builder().title(text).build()
 }
 
+/// Enregistre la feuille de style des badges pour tout l'affichage (une fois).
+fn install_css() {
+    let provider = gtk::CssProvider::new();
+    provider.load_from_data(BADGE_CSS);
+    if let Some(display) = gtk::gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
+}
+
+/// Pilule de statut colorée : `variant` = classe CSS (`ag-ok`/`ag-warn`/`ag-err`).
+fn badge(text: &str, variant: &str) -> gtk::Label {
+    gtk::Label::builder()
+        .label(text)
+        .valign(gtk::Align::Center)
+        .css_classes(["ag-badge", variant])
+        .build()
+}
+
 /// Ligne « rien à faire » : confirme que tout est à jour ET, en sous-titre,
 /// rappelle la politique de maturation — pour qu'un nouvel utilisateur comprenne
 /// que de futures maj seront proposées plus tard, pas absentes.
@@ -977,41 +1010,6 @@ fn lag_age_label(target: &aur::LagTarget) -> String {
     t!("revision {}d old", age)
 }
 
-/// Suffixe « ancienne → nouvelle » (versions seules, sans mot traduisible).
-/// Vide si l'une des deux manque.
-fn plain_versions(o: &Outcome) -> String {
-    if !o.update.old_ver.is_empty() && !o.update.new_ver.is_empty() {
-        format!("{} → {}", o.update.old_ver, o.update.new_ver)
-    } else {
-        String::new()
-    }
-}
-
-/// Suffixe versions pour un paquet autorisé : en mode lag, montre la version
-/// cible et l'âge réel de la révision installée, puis — si la dernière version
-/// publiée diffère de celle installée — la signale avec son ancienneté.
-fn installed_versions(o: &Outcome) -> String {
-    let Some(target) = &o.lag else {
-        return plain_versions(o);
-    };
-    let base = if o.update.old_ver.is_empty() {
-        format!("→ {}, {}", target.version, lag_age_label(target))
-    } else {
-        format!(
-            "{} → {}, {}",
-            o.update.old_ver,
-            target.version,
-            lag_age_label(target)
-        )
-    };
-    // La révision lag installée n'est pas la dernière publiée : la signaler.
-    if !o.update.new_ver.is_empty() && o.update.new_ver != target.version {
-        format!("{base} · {}", latest_label(o))
-    } else {
-        base
-    }
-}
-
 /// Libellé de la dernière version publiée et de son ancienneté.
 fn latest_label(o: &Outcome) -> String {
     match o.age_days {
@@ -1020,79 +1018,111 @@ fn latest_label(o: &Outcome) -> String {
     }
 }
 
-/// Accole un libellé et un suffixe versions entre parenthèses (suffixe vide → libellé seul).
-fn join_label(label: &str, versions: &str) -> String {
-    if versions.is_empty() {
-        label.to_string()
-    } else {
-        format!("{label}  ({versions})")
+/// Version cible d'un paquet autorisé : la révision lag installée, sinon la dernière.
+fn allow_target(o: &Outcome) -> String {
+    match &o.lag {
+        Some(t) => t.version.clone(),
+        None if !o.update.new_ver.is_empty() => o.update.new_ver.clone(),
+        None => o.update.old_ver.clone(),
     }
 }
 
-/// Sous-titre d'un paquet en attente : montre la transition de version visée
-/// (actuelle → version qui mûrit, c.-à-d. la dernière publiée), la date d'arrivée
-/// et l'ancienneté de cette dernière version. Rend la maturation entièrement lisible.
-fn delayed_subtitle(o: &Outcome, days_since_mod: u64, now: u64) -> String {
-    // Version réellement posée à l'échéance (révision qui mûrit) si connue ;
-    // sinon la dernière publiée, sinon l'installée (cas dégénéré).
-    let target = o
-        .eligible_version
+/// Version qui sera réellement posée à l'échéance d'un paquet en attente.
+fn delayed_target(o: &Outcome) -> String {
+    o.eligible_version
         .as_deref()
         .filter(|v| !v.is_empty())
-        .unwrap_or(if o.update.new_ver.is_empty() {
-            &o.update.old_ver
-        } else {
-            &o.update.new_ver
-        });
-    let from_to = if o.update.old_ver.is_empty() {
-        format!("→ {target}")
-    } else {
-        format!("{} → {}", o.update.old_ver, target)
-    };
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            if o.update.new_ver.is_empty() {
+                o.update.old_ver.clone()
+            } else {
+                o.update.new_ver.clone()
+            }
+        })
+}
+
+/// Sous-titre (détails secondaires) d'un paquet autorisé : version actuelle, âge
+/// de la révision lag, et dernière version publiée si elle diffère de l'installée.
+fn allow_detail(o: &Outcome) -> String {
+    let mut parts = Vec::new();
+    if !o.update.old_ver.is_empty() {
+        parts.push(t!("current {}", o.update.old_ver));
+    }
+    if let Some(target) = &o.lag {
+        parts.push(lag_age_label(target));
+        if !o.update.new_ver.is_empty() && o.update.new_ver != target.version {
+            parts.push(latest_label(o));
+        }
+    }
+    if o.whitelisted {
+        parts.push(t!("whitelisted"));
+    }
+    parts.join("  ·  ")
+}
+
+/// Sous-titre (détails secondaires) d'un paquet en attente : date d'arrivée,
+/// version actuelle, et dernière version publiée si elle diffère de la cible.
+fn delayed_detail(o: &Outcome, days_since_mod: u64, now: u64) -> String {
+    let mut parts = Vec::new();
+    if let Some(ts) = o.eligible_at {
+        if ts > now {
+            parts.push(t!("available on {}", format_date(ts)));
+        }
+    }
+    if !o.update.old_ver.is_empty() {
+        parts.push(t!("current {}", o.update.old_ver));
+    }
+    let target = delayed_target(o);
+    if !o.update.new_ver.is_empty() && o.update.new_ver != target {
+        parts.push(t!(
+            "latest {} published {}d ago",
+            o.update.new_ver,
+            days_since_mod
+        ));
+    }
+    parts.join("  ·  ")
+}
+
+/// Badge de compte à rebours d'un paquet en attente (« ~N j », orange).
+fn delayed_badge(o: &Outcome, now: u64) -> gtk::Label {
     match o.eligible_at {
         Some(ts) if ts > now => {
             let days = ts.saturating_sub(now).div_ceil(aur::SECS_PER_DAY);
-            t!(
-                "On hold — {}, available on {} (in ~{}d) — latest published {}d ago",
-                from_to,
-                format_date(ts),
-                days,
-                days_since_mod
-            )
+            badge(&t!("~{}d", days), "ag-warn")
         }
-        _ => t!(
-            "On hold — {} — latest published {}d ago",
-            from_to,
-            days_since_mod
-        ),
+        _ => badge(&t!("on hold"), "ag-warn"),
     }
 }
 
+/// Ligne d'un verdict : titre = « paquet → version cible » (bien visible), badge
+/// de statut coloré à droite, détails grisés en sous-titre. Couleur du badge +
+/// titre = « quelle version, quel statut » saisis d'un coup d'œil.
 fn outcome_row(o: &Outcome) -> adw::ActionRow {
     let now = aur::now_secs();
-    let (icon, subtitle) = match &o.decision {
+    let row = adw::ActionRow::builder().build();
+    row.set_use_markup(false); // versions/raisons littérales (pas d'échappement requis)
+    row.set_subtitle_lines(0); // détails parfois longs : ne pas tronquer
+    let icon = match &o.decision {
         Decision::Allow => {
-            let label = if o.whitelisted {
-                t!("Allowed (whitelist)")
-            } else {
-                t!("Allowed")
-            };
-            (
-                "emblem-ok-symbolic",
-                join_label(&label, &installed_versions(o)),
-            )
+            row.set_title(&format!("{} → {}", o.update.name, allow_target(o)));
+            row.set_subtitle(&allow_detail(o));
+            row.add_suffix(&badge(&t!("to install"), "ag-ok"));
+            "emblem-ok-symbolic"
         }
-        Decision::Delayed(d) => ("appointment-soon-symbolic", delayed_subtitle(o, *d, now)),
-        Decision::Blocked(reason) => (
-            "dialog-warning-symbolic",
-            join_label(&t!("BLOCKED — {}", reason), &plain_versions(o)),
-        ),
+        Decision::Delayed(d) => {
+            row.set_title(&format!("{} → {}", o.update.name, delayed_target(o)));
+            row.set_subtitle(&delayed_detail(o, *d, now));
+            row.add_suffix(&delayed_badge(o, now));
+            "appointment-soon-symbolic"
+        }
+        Decision::Blocked(reason) => {
+            row.set_title(&o.update.name);
+            row.set_subtitle(&t!("BLOCKED — {}", reason));
+            row.add_suffix(&badge(&t!("blocked"), "ag-err"));
+            "dialog-warning-symbolic"
+        }
     };
-    let row = adw::ActionRow::builder()
-        .title(&o.update.name)
-        .subtitle(&subtitle)
-        .build();
-    row.set_subtitle_lines(0); // sous-titre riche (date + versions) : ne pas tronquer
     row.add_prefix(&gtk::Image::from_icon_name(icon));
     row
 }

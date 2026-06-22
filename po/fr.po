@@ -310,17 +310,41 @@ msgstr "Les nouvelles mises à jour AUR seront proposées après {}j de maturati
 msgid "New AUR updates are held for {}d before being offered (hold mode)."
 msgstr "Les nouvelles mises à jour AUR sont bloquées {}j avant d'être proposées (mode hold)."
 
-msgid "On hold — {}, available on {} (in ~{}d) — latest published {}d ago"
-msgstr "En attente — {}, disponible le {} (dans ~{}j) — dernière publiée il y a {}j"
+msgid "On hold — {}, available on {} (in ~{}d) — {}"
+msgstr "En attente — {}, disponible le {} (dans ~{}j) — {}"
 
-msgid "On hold — {} — latest published {}d ago"
-msgstr "En attente — {} — dernière publiée il y a {}j"
+msgid "On hold — {} — {}"
+msgstr "En attente — {} — {}"
+
+msgid "latest published {}d ago"
+msgstr "dernière publiée il y a {}j"
 
 msgid "latest {} published {}d ago"
 msgstr "dernière {} publiée il y a {}j"
 
 msgid "latest {}"
 msgstr "dernière {}"
+
+msgid "current {}"
+msgstr "actuelle {}"
+
+msgid "whitelisted"
+msgstr "whitelist"
+
+msgid "available on {}"
+msgstr "disponible le {}"
+
+msgid "to install"
+msgstr "à installer"
+
+msgid "on hold"
+msgstr "en attente"
+
+msgid "blocked"
+msgstr "bloqué"
+
+msgid "~{}d"
+msgstr "~{}j"
 
 msgid "Press Enter to close…"
 msgstr "Entrée pour fermer…"
