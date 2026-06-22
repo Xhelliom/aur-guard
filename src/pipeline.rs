@@ -241,3 +241,73 @@ pub fn allowed_names(outcomes: &[Outcome]) -> Vec<String> {
         .map(|o| o.update.name.clone())
         .collect()
 }
+
+/// Répartition des verdicts AUR : alimente les KPI et la barre de visualisation
+/// des frontends. Pur agrégat de comptage — aucune logique de décision ici.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Summary {
+    /// Paquets autorisés à l'installation (dernière version ou révision lag).
+    pub allowed: usize,
+    /// Paquets retardés (trop récents pour le délai configuré).
+    pub delayed: usize,
+    /// Paquets bloqués (scan, IA ou révision annulée).
+    pub blocked: usize,
+}
+
+/// Compte les verdicts par catégorie.
+pub fn summarize(outcomes: &[Outcome]) -> Summary {
+    let mut s = Summary::default();
+    for o in outcomes {
+        match o.decision {
+            Decision::Allow => s.allowed += 1,
+            Decision::Delayed(_) => s.delayed += 1,
+            Decision::Blocked(_) => s.blocked += 1,
+        }
+    }
+    s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::aur::Update;
+    use crate::scan::ScanResult;
+
+    fn outcome_with(decision: Decision) -> Outcome {
+        Outcome {
+            update: Update {
+                name: "pkg".into(),
+                old_ver: String::new(),
+                new_ver: String::new(),
+            },
+            age_days: None,
+            whitelisted: false,
+            scan: ScanResult::Skipped,
+            decision,
+            lag: None,
+        }
+    }
+
+    #[test]
+    fn summarize_counts_each_decision() {
+        let outcomes = vec![
+            outcome_with(Decision::Allow),
+            outcome_with(Decision::Allow),
+            outcome_with(Decision::Delayed(3)),
+            outcome_with(Decision::Blocked("nope".into())),
+        ];
+        assert_eq!(
+            summarize(&outcomes),
+            Summary {
+                allowed: 2,
+                delayed: 1,
+                blocked: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn summarize_empty_is_zeroed() {
+        assert_eq!(summarize(&[]), Summary::default());
+    }
+}

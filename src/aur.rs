@@ -236,6 +236,9 @@ pub struct LagTarget {
     pub commit: String,
     /// Version (epoch:pkgver-pkgrel) à ce commit, ou "?" si dynamique (VCS).
     pub version: String,
+    /// Horodatage Unix (secondes) du commit cible : permet d'afficher l'âge réel
+    /// de la révision qui sera installée. 0 si la date n'a pas pu être lue.
+    pub committed_at: u64,
     /// Contenu du PKGBUILD à ce commit (pour la review).
     pub pkgbuild: String,
 }
@@ -299,10 +302,16 @@ pub fn lagged_target(pkgbase: &str, before_epoch: u64) -> Result<Option<LagTarge
     }
     let pkgbuild = run_git(&dir, &["show", &format!("{commit}:PKGBUILD")]).unwrap_or_default();
     let version = parse_version(&pkgbuild);
+    // Date du commit cible : `%ct` = horodatage Unix du committer.
+    let committed_at = run_git(&dir, &["show", "-s", "--format=%ct", &commit])
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or(0);
     Ok(Some(LagTarget {
         pkgbase: pkgbase.to_string(),
         commit,
         version,
+        committed_at,
         pkgbuild,
     }))
 }
