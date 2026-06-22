@@ -1,6 +1,6 @@
 # Maintainer: Xhelliom
 pkgname=aur-guard
-pkgver=0.1.1
+pkgver=0.2.0
 pkgrel=1
 pkgdesc="Garde-fou de sécurité pour les mises à jour AUR : délai, whitelist, scan statique et review IA du diff PKGBUILD"
 arch=('x86_64' 'aarch64')

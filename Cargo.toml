@@ -1,6 +1,6 @@
 [package]
 name = "aur-guard"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 description = "Garde-fou de sécurité pour les mises à jour AUR : délai, whitelist, scan statique et review IA du diff PKGBUILD"
 license = "MIT"
