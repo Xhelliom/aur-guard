@@ -18,6 +18,22 @@ use aur_guard::{aur, deploy, t};
 
 const APP_ID: &str = "fr.xhelliom.AurGuard";
 
+/// Couleur RGB (0..1) d'un segment de la barre de répartition / d'une pastille.
+type Rgb = (f64, f64, f64);
+
+/// Hauteur de la barre de répartition (px).
+const BAR_HEIGHT: i32 = 18;
+/// Côté d'une pastille de légende (px).
+const SWATCH_SIZE: i32 = 12;
+
+// Palette des catégories : alignée sur les couleurs sémantiques d'Adwaita
+// (accent/vert/bleu/orange/rouge) pour rester lisible en thème clair et sombre.
+const COLOR_OFFICIAL: Rgb = (0.38, 0.49, 0.55); // ardoise — dépôts signés
+const COLOR_ALLOW: Rgb = (0.18, 0.76, 0.49); // vert — installé en dernière version
+const COLOR_LAG: Rgb = (0.20, 0.56, 0.85); // bleu — installé en révision décalée
+const COLOR_DELAY: Rgb = (0.96, 0.55, 0.06); // orange — retardé
+const COLOR_BLOCK: Rgb = (0.88, 0.11, 0.14); // rouge — bloqué
+
 fn main() -> glib::ExitCode {
     aur_guard::i18n::init();
     let app = adw::Application::builder().application_id(APP_ID).build();
@@ -119,6 +135,13 @@ fn build_ui(app: &adw::Application) {
     results.append(&info_row(&t!("Click “Check” to run the analysis.")));
     updates.add(&results);
 
+    // Tableau de bord (KPI + barre de répartition), rempli par la vérification.
+    let dashboard = gtk::Box::builder()
+        .orientation(Orientation::Vertical)
+        .spacing(12)
+        .build();
+
+    page.append(&dashboard);
     page.append(&updates);
 
     let scroller = gtk::ScrolledWindow::builder()
@@ -148,11 +171,17 @@ fn build_ui(app: &adw::Application) {
         });
     }
 
-    wire_check(&cfg, &check_btn, &results, &selected, &apply_btn);
+    wire_check(
+        &cfg, &check_btn, &dashboard, &results, &selected, &apply_btn,
+    );
     wire_apply(&apply_btn, &selected, &overlay);
     wire_upgrade(&upgrade_btn, &overlay);
 
     window.present();
+
+    // Rafraîchissement automatique au démarrage : on déclenche la même
+    // vérification que le bouton, sans dupliquer sa logique.
+    check_btn.emit_clicked();
 }
 
 /// Branche le bouton « Vérifier » : évaluation en arrière-plan puis affichage,
@@ -160,11 +189,13 @@ fn build_ui(app: &adw::Application) {
 fn wire_check(
     cfg: &Rc<RefCell<Config>>,
     check_btn: &gtk::Button,
+    dashboard: &gtk::Box,
     results: &gtk::ListBox,
     selected: &Rc<RefCell<Vec<(String, gtk::CheckButton)>>>,
     apply_btn: &gtk::Button,
 ) {
     let cfg = cfg.clone();
+    let dashboard = dashboard.clone();
     let results = results.clone();
     let selected = selected.clone();
     let apply_btn = apply_btn.clone();
@@ -172,6 +203,7 @@ fn wire_check(
     check_btn.connect_clicked(move |_| {
         check_btn_outer.set_sensitive(false);
         check_btn_outer.set_label(&t!("Checking…"));
+        clear_box(&dashboard);
         clear_listbox(&results);
         selected.borrow_mut().clear();
         apply_btn.set_sensitive(false);
@@ -186,6 +218,7 @@ fn wire_check(
             let _ = tx.send_blocking(res);
         });
 
+        let dashboard = dashboard.clone();
         let results = results.clone();
         let selected = selected.clone();
         let apply_btn = apply_btn.clone();
@@ -194,33 +227,9 @@ fn wire_check(
             if let Ok(res) = rx.recv().await {
                 match res {
                     Ok((official, outcomes)) => {
-                        if !official.is_empty() {
-                            results.append(&info_row(&t!(
-                                "Official repositories: {} signed updates (“Update everything”)",
-                                official.len()
-                            )));
-                            for line in &official {
-                                results.append(&info_row(&format!("  {line}")));
-                            }
-                        }
-                        if outcomes.is_empty() {
-                            results.append(&info_row(&t!("No AUR updates available.")));
-                        }
-                        for o in &outcomes {
-                            let row = outcome_row(o);
-                            // Seuls les paquets autorisés sont sélectionnables :
-                            // la sélection ne fait que restreindre l'ensemble
-                            // déjà validé, jamais forcer un delayed/blocked.
-                            if o.decision == Decision::Allow {
-                                let check = gtk::CheckButton::builder()
-                                    .tooltip_text(t!("Include in the selective update"))
-                                    .build();
-                                row.add_suffix(&check);
-                                selected.borrow_mut().push((o.update.name.clone(), check));
-                            }
-                            results.append(&row);
-                        }
-                        apply_btn.set_sensitive(!selected.borrow().is_empty());
+                        render(
+                            &dashboard, &results, &official, &outcomes, &selected, &apply_btn,
+                        );
                     }
                     Err(e) => results.append(&info_row(&t!("Error: {}", e))),
                 }
@@ -229,6 +238,102 @@ fn wire_check(
             check_btn_inner.set_label(&t!("Check"));
         });
     });
+}
+
+/// Peuple le tableau de bord (KPI + barre) et les listes repliables à partir des
+/// verdicts. Toute la décision est déjà prise par `pipeline` ; on ne fait que
+/// présenter et regrouper.
+fn render(
+    dashboard: &gtk::Box,
+    results: &gtk::ListBox,
+    official: &[String],
+    outcomes: &[Outcome],
+    selected: &Rc<RefCell<Vec<(String, gtk::CheckButton)>>>,
+    apply_btn: &gtk::Button,
+) {
+    clear_box(dashboard);
+    clear_listbox(results);
+    selected.borrow_mut().clear();
+
+    if official.is_empty() && outcomes.is_empty() {
+        results.append(&info_row(&t!("Everything is up to date.")));
+        apply_btn.set_sensitive(false);
+        return;
+    }
+
+    let summary = pipeline::summarize(outcomes);
+    dashboard.append(&kpi_row(official.len(), &summary));
+    dashboard.append(&distribution_bar(official, outcomes, &summary));
+
+    // Bloqués en premier (le plus important), dépliés.
+    let blocked: Vec<&Outcome> = outcomes
+        .iter()
+        .filter(|o| matches!(o.decision, Decision::Blocked(_)))
+        .collect();
+    if !blocked.is_empty() {
+        let exp = group_expander(
+            &t!("Blocked"),
+            blocked.len(),
+            true,
+            "dialog-warning-symbolic",
+        );
+        for o in &blocked {
+            exp.add_row(&outcome_row(o));
+        }
+        results.append(&exp);
+    }
+
+    // À installer, dépliés, avec cases à cocher (sélection = restriction).
+    let allowed: Vec<&Outcome> = outcomes
+        .iter()
+        .filter(|o| o.decision == Decision::Allow)
+        .collect();
+    if !allowed.is_empty() {
+        let exp = group_expander(&t!("To install"), allowed.len(), true, "emblem-ok-symbolic");
+        for o in &allowed {
+            let row = outcome_row(o);
+            let check = gtk::CheckButton::builder()
+                .tooltip_text(t!("Include in the selective update"))
+                .build();
+            row.add_suffix(&check);
+            selected.borrow_mut().push((o.update.name.clone(), check));
+            exp.add_row(&row);
+        }
+        results.append(&exp);
+    }
+
+    // Retardés et dépôts officiels : repliés par défaut (informatif).
+    let delayed: Vec<&Outcome> = outcomes
+        .iter()
+        .filter(|o| matches!(o.decision, Decision::Delayed(_)))
+        .collect();
+    if !delayed.is_empty() {
+        let exp = group_expander(
+            &t!("On hold"),
+            delayed.len(),
+            false,
+            "appointment-soon-symbolic",
+        );
+        for o in &delayed {
+            exp.add_row(&outcome_row(o));
+        }
+        results.append(&exp);
+    }
+
+    if !official.is_empty() {
+        let exp = group_expander(
+            &t!("Official repositories (signed)"),
+            official.len(),
+            false,
+            "package-x-generic-symbolic",
+        );
+        for line in official {
+            exp.add_row(&info_row(line));
+        }
+        results.append(&exp);
+    }
+
+    apply_btn.set_sensitive(!selected.borrow().is_empty());
 }
 
 /// Branche le bouton « Mettre à jour la sélection » : lance `aur-guard apply`
@@ -632,8 +737,203 @@ fn clear_listbox(list: &gtk::ListBox) {
     }
 }
 
+fn clear_box(b: &gtk::Box) {
+    while let Some(child) = b.first_child() {
+        b.remove(&child);
+    }
+}
+
+// =====================================================================
+// Tableau de bord : KPI + barre de répartition
+// =====================================================================
+
+/// Rangée de cartes KPI résumant ce qui va (ou non) être mis à jour.
+fn kpi_row(official: usize, summary: &pipeline::Summary) -> gtk::Box {
+    let row = gtk::Box::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(8)
+        .homogeneous(true)
+        .build();
+    row.append(&kpi_card(official, &t!("Official"), "accent"));
+    row.append(&kpi_card(summary.allowed, &t!("To install"), "success"));
+    row.append(&kpi_card(summary.delayed, &t!("On hold"), "warning"));
+    row.append(&kpi_card(summary.blocked, &t!("Blocked"), "error"));
+    row
+}
+
+/// Une carte KPI : grand nombre coloré + libellé. `accent` est une classe de
+/// style sémantique Adwaita (accent/success/warning/error).
+fn kpi_card(value: usize, label: &str, accent: &str) -> gtk::Box {
+    let card = gtk::Box::builder()
+        .orientation(Orientation::Vertical)
+        .spacing(2)
+        .hexpand(true)
+        .css_classes(["card"])
+        .margin_top(12)
+        .margin_bottom(12)
+        .margin_start(8)
+        .margin_end(8)
+        .build();
+    let num = gtk::Label::builder()
+        .label(value.to_string())
+        .css_classes(["title-1", accent])
+        .build();
+    let lbl = gtk::Label::builder()
+        .label(label)
+        .wrap(true)
+        .justify(gtk::Justification::Center)
+        .css_classes(["dim-label", "caption"])
+        .build();
+    card.append(&num);
+    card.append(&lbl);
+    card
+}
+
+/// Catégorie de la barre de répartition : libellé, effectif, couleur.
+struct Segment {
+    label: String,
+    count: usize,
+    color: Rgb,
+}
+
+/// Barre horizontale segmentée (proportionnelle aux effectifs) + sa légende.
+/// Visualise d'un coup d'œil officiels / à installer / décalés / retardés / bloqués.
+fn distribution_bar(
+    official: &[String],
+    outcomes: &[Outcome],
+    summary: &pipeline::Summary,
+) -> gtk::Box {
+    // Au sein des « autorisés », distingue dernière version et révision décalée.
+    let lagged = outcomes
+        .iter()
+        .filter(|o| o.decision == Decision::Allow && o.lag.is_some())
+        .count();
+    let latest = summary.allowed.saturating_sub(lagged);
+
+    let segments = [
+        Segment {
+            label: t!("Official"),
+            count: official.len(),
+            color: COLOR_OFFICIAL,
+        },
+        Segment {
+            label: t!("Latest"),
+            count: latest,
+            color: COLOR_ALLOW,
+        },
+        Segment {
+            label: t!("Deferred"),
+            count: lagged,
+            color: COLOR_LAG,
+        },
+        Segment {
+            label: t!("On hold"),
+            count: summary.delayed,
+            color: COLOR_DELAY,
+        },
+        Segment {
+            label: t!("Blocked"),
+            count: summary.blocked,
+            color: COLOR_BLOCK,
+        },
+    ];
+
+    let container = gtk::Box::builder()
+        .orientation(Orientation::Vertical)
+        .spacing(8)
+        .build();
+
+    let bar = gtk::DrawingArea::builder()
+        .height_request(BAR_HEIGHT)
+        .hexpand(true)
+        .build();
+    bar.add_css_class("card");
+    let drawn: Vec<(usize, Rgb)> = segments.iter().map(|s| (s.count, s.color)).collect();
+    bar.set_draw_func(move |_, cr, width, height| {
+        let total: usize = drawn.iter().map(|(c, _)| c).sum();
+        if total == 0 {
+            return;
+        }
+        let (w, h) = (width as f64, height as f64);
+        let mut x = 0.0;
+        for (i, (count, color)) in drawn.iter().enumerate() {
+            // Le dernier segment va jusqu'au bord pour absorber les arrondis.
+            let seg_w = if i + 1 == drawn.len() {
+                w - x
+            } else {
+                w * *count as f64 / total as f64
+            };
+            cr.set_source_rgb(color.0, color.1, color.2);
+            cr.rectangle(x, 0.0, seg_w, h);
+            let _ = cr.fill();
+            x += seg_w;
+        }
+    });
+    container.append(&bar);
+
+    // Légende : une pastille par catégorie non vide.
+    let legend = gtk::Box::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(14)
+        .halign(gtk::Align::Center)
+        .build();
+    for s in segments.iter().filter(|s| s.count > 0) {
+        legend.append(&legend_item(s));
+    }
+    container.append(&legend);
+
+    container
+}
+
+/// Une entrée de légende : pastille colorée + « libellé effectif ».
+fn legend_item(seg: &Segment) -> gtk::Box {
+    let item = gtk::Box::builder()
+        .orientation(Orientation::Horizontal)
+        .spacing(6)
+        .build();
+    let swatch = gtk::DrawingArea::builder()
+        .width_request(SWATCH_SIZE)
+        .height_request(SWATCH_SIZE)
+        .valign(gtk::Align::Center)
+        .build();
+    let color = seg.color;
+    swatch.set_draw_func(move |_, cr, width, height| {
+        cr.set_source_rgb(color.0, color.1, color.2);
+        cr.rectangle(0.0, 0.0, width as f64, height as f64);
+        let _ = cr.fill();
+    });
+    let label = gtk::Label::builder()
+        .label(format!("{} {}", seg.label, seg.count))
+        .css_classes(["caption"])
+        .build();
+    item.append(&swatch);
+    item.append(&label);
+    item
+}
+
+/// Ligne repliable groupant des paquets d'une même catégorie (titre + compteur).
+fn group_expander(title: &str, count: usize, expanded: bool, icon: &str) -> adw::ExpanderRow {
+    let exp = adw::ExpanderRow::builder()
+        .title(title)
+        .subtitle(t!("{} packages", count))
+        .expanded(expanded)
+        .build();
+    exp.add_prefix(&gtk::Image::from_icon_name(icon));
+    exp
+}
+
 fn info_row(text: &str) -> adw::ActionRow {
     adw::ActionRow::builder().title(text).build()
+}
+
+/// Libellé de l'âge de la révision décalée ciblée (date du commit cible).
+/// `committed_at == 0` signifie date illisible : on le signale plutôt que mentir.
+fn lag_age_label(target: &aur::LagTarget) -> String {
+    if target.committed_at == 0 {
+        return t!("revision age unknown");
+    }
+    let age = aur::now_secs().saturating_sub(target.committed_at) / aur::SECS_PER_DAY;
+    t!("revision {}d old", age)
 }
 
 fn outcome_row(o: &Outcome) -> adw::ActionRow {
@@ -653,10 +953,19 @@ fn outcome_row(o: &Outcome) -> adw::ActionRow {
         Decision::Blocked(reason) => ("dialog-warning-symbolic", t!("BLOCKED — {}", reason)),
     };
     let subtitle = match &o.lag {
-        Some(target) if !o.update.old_ver.is_empty() => {
-            format!("{}  ({} → {} D-N)", label, o.update.old_ver, target.version)
+        // Mode lag : on installe une révision passée — on affiche sa version
+        // cible ET son âge réel, pour rendre visible « vieille de 2 semaines ».
+        Some(target) => {
+            let aged = lag_age_label(target);
+            if o.update.old_ver.is_empty() {
+                format!("{}  (→ {}, {})", label, target.version, aged)
+            } else {
+                format!(
+                    "{}  ({} → {}, {})",
+                    label, o.update.old_ver, target.version, aged
+                )
+            }
         }
-        Some(target) => format!("{}  (→ {} D-N)", label, target.version),
         None => match (o.update.old_ver.is_empty(), o.update.new_ver.is_empty()) {
             (false, false) => format!("{}  ({} → {})", label, o.update.old_ver, o.update.new_ver),
             _ => label,

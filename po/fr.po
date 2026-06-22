@@ -274,6 +274,36 @@ msgstr "Retardé — modifié il y a {}j"
 msgid "BLOCKED — {}"
 msgstr "BLOQUÉ — {}"
 
+msgid "Everything is up to date."
+msgstr "Tout est à jour."
+
+msgid "Official"
+msgstr "Officiels"
+
+msgid "To install"
+msgstr "À installer"
+
+msgid "On hold"
+msgstr "En attente"
+
+msgid "Blocked"
+msgstr "Bloqués"
+
+msgid "Latest"
+msgstr "Dernière version"
+
+msgid "Deferred"
+msgstr "Décalés"
+
+msgid "Official repositories (signed)"
+msgstr "Dépôts officiels (signés)"
+
+msgid "revision {}d old"
+msgstr "révision vieille de {}j"
+
+msgid "revision age unknown"
+msgstr "âge de la révision inconnu"
+
 msgid "Press Enter to close…"
 msgstr "Entrée pour fermer…"
 
