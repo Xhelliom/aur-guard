@@ -988,19 +988,35 @@ fn plain_versions(o: &Outcome) -> String {
 }
 
 /// Suffixe versions pour un paquet autorisé : en mode lag, montre la version
-/// cible ET l'âge réel de la révision installée.
+/// cible et l'âge réel de la révision installée, puis — si la dernière version
+/// publiée diffère de celle installée — la signale avec son ancienneté.
 fn installed_versions(o: &Outcome) -> String {
-    match &o.lag {
-        Some(target) if o.update.old_ver.is_empty() => {
-            format!("→ {}, {}", target.version, lag_age_label(target))
-        }
-        Some(target) => format!(
+    let Some(target) = &o.lag else {
+        return plain_versions(o);
+    };
+    let base = if o.update.old_ver.is_empty() {
+        format!("→ {}, {}", target.version, lag_age_label(target))
+    } else {
+        format!(
             "{} → {}, {}",
             o.update.old_ver,
             target.version,
             lag_age_label(target)
-        ),
-        None => plain_versions(o),
+        )
+    };
+    // La révision lag installée n'est pas la dernière publiée : la signaler.
+    if !o.update.new_ver.is_empty() && o.update.new_ver != target.version {
+        format!("{base} · {}", latest_label(o))
+    } else {
+        base
+    }
+}
+
+/// Libellé de la dernière version publiée et de son ancienneté.
+fn latest_label(o: &Outcome) -> String {
+    match o.age_days {
+        Some(w) => t!("latest {} published {}d ago", o.update.new_ver, w),
+        None => t!("latest {}", o.update.new_ver),
     }
 }
 
@@ -1013,23 +1029,37 @@ fn join_label(label: &str, versions: &str) -> String {
     }
 }
 
-/// Sous-titre d'un paquet retardé : annonce explicitement la date d'arrivée
-/// (« disponible le … (dans ~N j) ») quand elle est connue, sinon retombe sur
-/// l'âge de la dernière modif. C'est ce qui rend la maturation lisible.
+/// Sous-titre d'un paquet en attente : montre la transition de version visée
+/// (actuelle → version qui mûrit, c.-à-d. la dernière publiée), la date d'arrivée
+/// et l'ancienneté de cette dernière version. Rend la maturation entièrement lisible.
 fn delayed_subtitle(o: &Outcome, days_since_mod: u64, now: u64) -> String {
-    let modified = t!("modified {}d ago", days_since_mod);
-    let tail = join_label(&modified, &plain_versions(o));
+    // À l'échéance, la révision installable sera la dernière publiée à ce jour.
+    let target = if o.update.new_ver.is_empty() {
+        &o.update.old_ver
+    } else {
+        &o.update.new_ver
+    };
+    let from_to = if o.update.old_ver.is_empty() {
+        format!("→ {target}")
+    } else {
+        format!("{} → {}", o.update.old_ver, target)
+    };
     match o.eligible_at {
         Some(ts) if ts > now => {
             let days = ts.saturating_sub(now).div_ceil(aur::SECS_PER_DAY);
             t!(
-                "On hold — available on {} (in ~{}d) · {}",
+                "On hold — {}, available on {} (in ~{}d) — latest published {}d ago",
+                from_to,
                 format_date(ts),
                 days,
-                tail
+                days_since_mod
             )
         }
-        _ => t!("On hold · {}", tail),
+        _ => t!(
+            "On hold — {} — latest published {}d ago",
+            from_to,
+            days_since_mod
+        ),
     }
 }
 
