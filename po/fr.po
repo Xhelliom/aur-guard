@@ -547,3 +547,28 @@ msgstr "Ignoré {} — non validé par la chaîne de sécurité (voir le rapport
 
 msgid "Skipping {} — no pending update"
 msgstr "Ignoré {} — aucune mise à jour en attente"
+
+# ---- Core library (config / pipeline / aur / ai) ----
+msgid "Default config created: {}"
+msgstr "Config par défaut créée : {}"
+
+msgid "revision reverted since — {}"
+msgstr "révision annulée depuis — {}"
+
+msgid "aur-scan: {}"
+msgstr "aur-scan : {}"
+
+msgid "AI [{}]: {}"
+msgstr "IA [{}] : {}"
+
+msgid "dangerous pattern present in the target revision but removed since: {}"
+msgstr "motif dangereux présent dans la révision cible mais retiré depuis : {}"
+
+msgid "a later commit mentions “{}”"
+msgstr "un commit postérieur mentionne « {} »"
+
+msgid "{} — block confirmed by {}/{} votes"
+msgstr "{} — blocage confirmé par {}/{} votes"
+
+msgid "initial block NOT confirmed ({}/{} suspicious votes) — allowed"
+msgstr "blocage initial NON confirmé ({}/{} votes suspects) — autorisé"

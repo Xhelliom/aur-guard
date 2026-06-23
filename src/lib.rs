@@ -1,4 +1,4 @@
-//! Cœur de aur-guard, partagé par les frontends CLI, TUI et GUI.
+//! aur-guard core library, shared by the CLI, TUI and GUI frontends.
 
 pub mod ai;
 pub mod aur;

@@ -1,20 +1,21 @@
-//! Orchestration : pour chaque mise à jour AUR, applique la chaîne de décision
-//! whitelist -> délai (hold ou lag) -> scan statique -> review IA.
+//! Orchestration: for each AUR update, applies the decision chain
+//! whitelist -> delay (hold or lag) -> static scan -> AI review.
 
 use crate::ai;
 use crate::aur::{self, LagTarget, PkgInfo, Update};
 use crate::config::{Config, DelayMode};
 use crate::scan::{self, ScanResult};
+use crate::t;
 use anyhow::Result;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decision {
-    /// Mise à jour autorisée.
+    /// Update allowed.
     Allow,
-    /// Retardée car trop récente (âge en jours).
+    /// Delayed because too recent (age in days).
     Delayed(u64),
-    /// Bloquée par le scan statique ou la review IA, avec la raison.
+    /// Blocked by the static scan or the AI review, with the reason.
     Blocked(String),
 }
 
@@ -25,18 +26,18 @@ pub struct Outcome {
     pub whitelisted: bool,
     pub scan: ScanResult,
     pub decision: Decision,
-    /// En mode lag : la révision décalée à installer (None = dernière version).
+    /// In lag mode: the deferred revision to install (None = latest version).
     pub lag: Option<LagTarget>,
-    /// Pour un verdict `Delayed` datable : horodatage Unix (secondes) auquel la
-    /// prochaine révision aura assez mûri pour devenir installable. `None` quand
-    /// l'échéance n'a pas de sens (paquet VCS, erreur git) ou hors délai.
+    /// For a datable `Delayed` verdict: the Unix timestamp (seconds) at which the
+    /// next revision will have matured enough to become installable. `None` when
+    /// the deadline is meaningless (VCS package, git error) or outside the delay.
     pub eligible_at: Option<u64>,
-    /// Version qui sera réellement installée à `eligible_at` (en mode lag, la
-    /// révision qui mûrit — pas forcément la dernière publiée). `None` si inconnue.
+    /// Version that will actually be installed at `eligible_at` (in lag mode, the
+    /// maturing revision — not necessarily the latest published). `None` if unknown.
     pub eligible_version: Option<String>,
 }
 
-/// Évalue toutes les mises à jour disponibles selon la config.
+/// Evaluates all available updates according to the config.
 pub fn evaluate(cfg: &Config) -> Result<Vec<Outcome>> {
     let updates = aur::list_updates(&cfg.helper)?;
     if updates.is_empty() {
@@ -66,8 +67,8 @@ fn evaluate_one(
     let info = infos.get(&upd.name);
     let age_days = info.map(|i| now.saturating_sub(i.last_modified) / aur::SECS_PER_DAY);
 
-    // Paquet de confiance : on vise la DERNIÈRE version, délai ignoré, mais
-    // scan + review IA s'appliquent quand même.
+    // Trusted package: target the LATEST version, delay skipped, but the
+    // scan + AI review still apply.
     if whitelisted {
         return decide_latest(cfg, upd, age_days, true);
     }
@@ -86,7 +87,7 @@ fn evaluate_one(
     }
 }
 
-/// Mode lag : cible la révision qui était la HEAD il y a `threshold` secondes.
+/// Lag mode: targets the revision that was HEAD `threshold` seconds ago.
 fn evaluate_lag(
     cfg: &Config,
     upd: Update,
@@ -101,37 +102,37 @@ fn evaluate_lag(
     let before = now.saturating_sub(threshold);
 
     let target = match aur::lagged_target(&pkgbase, before) {
-        // Paquet trop jeune pour exister il y a N jours : il mûrira → datable.
+        // Package too young to have existed N days ago: it will mature → datable.
         Ok(None) => {
             let elig = lag_eligible(&pkgbase, &upd.old_ver, threshold, info);
             return delayed(upd, age_days, elig);
         }
         Ok(Some(t)) => t,
         Err(e) => {
-            // Erreur git transitoire : échéance inconnue.
-            eprintln!("  (git indisponible pour {}: {e})", upd.name);
+            // Transient git error: unknown deadline.
+            eprintln!("  (git unavailable for {}: {e})", upd.name);
             return delayed(upd, age_days, (None, None));
         }
     };
 
-    // Version dynamique (VCS) : le lag par révision n'a pas de sens, donc pas
-    // d'échéance d'installation à annoncer.
+    // Dynamic version (VCS): per-revision lag is meaningless, so there is no
+    // installation deadline to announce.
     if target.version == aur::DYNAMIC_VERSION {
         return delayed(upd, age_days, (None, None));
     }
 
-    // Sommes-nous déjà à jour (ou en avance) par rapport à la cible J-N ? Si
-    // oui, la seule maj disponible est plus récente que le délai → datable.
+    // Are we already up to date (or ahead) relative to the D-N target? If so,
+    // the only available update is more recent than the delay → datable.
     if aur::vercmp(&target.version, &upd.old_ver) <= 0 {
         let elig = lag_eligible(&pkgbase, &upd.old_ver, threshold, info);
         return delayed(upd, age_days, elig);
     }
 
-    // Garde : la révision cible a-t-elle été annulée/nettoyée depuis ? (Une
-    // version vérolée reste dans l'historique git après correction en place.)
+    // Guard: has the target revision been reverted/cleaned since? (A poisoned
+    // version stays in the git history after an in-place fix.)
     match aur::reverted_since(&target.pkgbase, &target.commit) {
         Ok(Some(reason)) => {
-            let decision = Decision::Blocked(format!("révision annulée depuis — {reason}"));
+            let decision = Decision::Blocked(t!("revision reverted since — {}", reason));
             return outcome(
                 upd,
                 age_days,
@@ -142,10 +143,10 @@ fn evaluate_lag(
             );
         }
         Ok(None) => {}
-        Err(e) => eprintln!("  (revert-check indisponible pour {}: {e})", upd.name),
+        Err(e) => eprintln!("  (revert-check unavailable for {}: {e})", upd.name),
     }
 
-    // Scan statique + review IA sur LA RÉVISION qu'on installera.
+    // Static scan + AI review on THE REVISION we will install.
     let scan = scan_lagged(&upd.name, &target.pkgbuild, cfg.use_aur_scan);
     let diff = if cfg.ai.enabled {
         aur::diff_against_installed(&upd.name, &target.pkgbuild)
@@ -156,7 +157,7 @@ fn evaluate_lag(
     outcome(upd, age_days, false, scan, Some(target), decision)
 }
 
-/// Décision visant la dernière version (whitelist, ou hold après maturation).
+/// Decision targeting the latest version (whitelist, or hold after maturation).
 fn decide_latest(cfg: &Config, upd: Update, age_days: Option<u64>, whitelisted: bool) -> Outcome {
     let scan = scan::scan_package(&upd.name, cfg.use_aur_scan);
     let diff = if cfg.ai.enabled {
@@ -168,25 +169,25 @@ fn decide_latest(cfg: &Config, upd: Update, age_days: Option<u64>, whitelisted: 
     outcome(upd, age_days, whitelisted, scan, None, decision)
 }
 
-/// Étape commune scan statique + review IA. Renvoie la décision finale ;
-/// un scan signalé ou une IA défavorable produisent un blocage motivé.
+/// Common static-scan + AI-review step. Returns the final decision;
+/// a flagged scan or an unfavourable AI verdict yield a justified block.
 fn vet(cfg: &Config, name: &str, scan: &ScanResult, diff: &str) -> Decision {
     if let ScanResult::Flagged(detail) = scan {
-        return Decision::Blocked(format!("aur-scan: {detail}"));
+        return Decision::Blocked(t!("aur-scan: {}", detail));
     }
     if cfg.ai.enabled && !diff.trim().is_empty() {
         match ai::review_diff(&cfg.ai, name, diff) {
             Ok(v) if !v.safe => {
-                return Decision::Blocked(format!("IA [{}]: {}", v.severity, v.summary));
+                return Decision::Blocked(t!("AI [{}]: {}", v.severity, v.summary));
             }
             Ok(_) => {}
-            Err(e) => eprintln!("  (review IA indisponible pour {name}: {e})"),
+            Err(e) => eprintln!("  (AI review unavailable for {name}: {e})"),
         }
     }
     Decision::Allow
 }
 
-/// Construit un `Outcome` (évite la répétition du littéral de struct).
+/// Builds an `Outcome` (avoids repeating the struct literal).
 fn outcome(
     update: Update,
     age_days: Option<u64>,
@@ -207,18 +208,18 @@ fn outcome(
     }
 }
 
-/// Échéance basée sur la dernière publication : `last_modified + délai`, ou
-/// `None` si les métadonnées manquent. Correcte pour le mode **hold** (qui
-/// re-bloque à chaque nouvelle publication) et sert de repli en mode lag.
+/// Deadline based on the latest publication: `last_modified + delay`, or
+/// `None` if the metadata is missing. Correct for **hold** mode (which
+/// re-blocks on every new publication) and used as a fallback in lag mode.
 fn eligible_at(info: Option<&PkgInfo>, threshold: u64) -> Option<u64> {
     info.map(|i| i.last_modified + threshold)
 }
 
-/// Échéance en mode **lag**, ancrée sur l'historique git : `(date, version)` de
-/// la prochaine révision plus récente que `installed`, l'échéance étant
-/// `date + délai`. Robuste aux publications ultérieures (une nouvelle version ne
-/// repousse pas l'échéance déjà acquise) et annonce la version réellement posée.
-/// Repli sur `eligible_at` (sans version) si le git est indisponible.
+/// Deadline in **lag** mode, anchored on the git history: `(date, version)` of
+/// the next revision more recent than `installed`, the deadline being
+/// `date + delay`. Robust against later publications (a new version does not
+/// push back an already-acquired deadline) and announces the version actually
+/// installed. Falls back to `eligible_at` (without a version) if git is unavailable.
 fn lag_eligible(
     pkgbase: &str,
     installed: &str,
@@ -229,14 +230,14 @@ fn lag_eligible(
         Ok(Some(nu)) => (Some(nu.committed_at + threshold), Some(nu.version)),
         Ok(None) => (eligible_at(info, threshold), None),
         Err(e) => {
-            eprintln!("  (historique git indisponible pour {pkgbase}: {e})");
+            eprintln!("  (git history unavailable for {pkgbase}: {e})");
             (eligible_at(info, threshold), None)
         }
     }
 }
 
-/// Verdict « retardé ». `(eligible_at, eligible_version)` portent l'échéance et la
-/// version visée quand le retard est datable ; `(None, None)` sinon.
+/// "Delayed" verdict. `(eligible_at, eligible_version)` carry the deadline and the
+/// targeted version when the delay is datable; `(None, None)` otherwise.
 fn delayed(upd: Update, age_days: Option<u64>, eligible: (Option<u64>, Option<String>)) -> Outcome {
     let decision = Decision::Delayed(age_days.unwrap_or(0));
     let mut o = outcome(upd, age_days, false, ScanResult::Skipped, None, decision);
@@ -244,8 +245,8 @@ fn delayed(upd: Update, age_days: Option<u64>, eligible: (Option<u64>, Option<St
     o
 }
 
-/// Scan statique d'une révision lag : on écrit le PKGBUILD dans un fichier
-/// temporaire et on le passe à `aur-scan scan`.
+/// Static scan of a lag revision: we write the PKGBUILD to a temporary file
+/// and pass it to `aur-scan scan`.
 fn scan_lagged(name: &str, pkgbuild: &str, enabled: bool) -> ScanResult {
     if !enabled {
         return ScanResult::Skipped;
@@ -259,7 +260,7 @@ fn scan_lagged(name: &str, pkgbuild: &str, enabled: bool) -> ScanResult {
     res
 }
 
-/// Liste des noms autorisés (toutes décisions Allow confondues).
+/// List of allowed names (all Allow decisions combined).
 pub fn allowed_names(outcomes: &[Outcome]) -> Vec<String> {
     outcomes
         .iter()
@@ -268,19 +269,19 @@ pub fn allowed_names(outcomes: &[Outcome]) -> Vec<String> {
         .collect()
 }
 
-/// Répartition des verdicts AUR : alimente les KPI et la barre de visualisation
-/// des frontends. Pur agrégat de comptage — aucune logique de décision ici.
+/// Breakdown of AUR verdicts: feeds the frontends' KPIs and visualization bar.
+/// A pure counting aggregate — no decision logic here.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Summary {
-    /// Paquets autorisés à l'installation (dernière version ou révision lag).
+    /// Packages cleared for installation (latest version or lag revision).
     pub allowed: usize,
-    /// Paquets retardés (trop récents pour le délai configuré).
+    /// Delayed packages (too recent for the configured delay).
     pub delayed: usize,
-    /// Paquets bloqués (scan, IA ou révision annulée).
+    /// Blocked packages (scan, AI or reverted revision).
     pub blocked: usize,
 }
 
-/// Compte les verdicts par catégorie.
+/// Counts the verdicts per category.
 pub fn summarize(outcomes: &[Outcome]) -> Summary {
     let mut s = Summary::default();
     for o in outcomes {

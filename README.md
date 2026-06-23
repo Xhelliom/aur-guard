@@ -1,80 +1,79 @@
 # aur-guard
 
-Garde-fou de sécurité pour les mises à jour AUR. Né après la compromission de
-masse de l'AUR de juin 2026 : plutôt que d'installer aveuglément la dernière
-version d'un paquet AUR, `aur-guard` applique une chaîne de décision avant
-chaque mise à jour.
+A security guardrail for AUR updates. Born after the mass AUR compromise of
+June 2026: rather than blindly installing the latest version of an AUR package,
+`aur-guard` applies a decision chain before every update.
 
-> 🌐 **Première visite ? Commencez par la page de présentation :
-> [xhelliom.github.io/aur-guard](https://xhelliom.github.io/aur-guard/)** — une
-> vue d'ensemble illustrée du projet, de ses interfaces et de sa philosophie.
-> La suite de ce README est la documentation technique.
+> 🌐 **First visit? Start with the overview page:
+> [xhelliom.github.io/aur-guard](https://xhelliom.github.io/aur-guard/)** — an
+> illustrated overview of the project, its interfaces, and its philosophy.
+> The rest of this README is the technical documentation.
 
-## Chaîne de décision
+## Decision chain
 
-Pour chaque paquet AUR avec une mise à jour disponible :
+For each AUR package with an available update:
 
-1. **Whitelist** — paquets de confiance (binaires signés d'éditeurs réputés) :
-   le délai est ignoré, mais le scan et la review IA s'appliquent quand même.
-2. **Délai** — deux sémantiques (`delay_mode`) :
-   - **`lag`** (défaut) : installe la révision du PKGBUILD qui était la `HEAD`
-     du dépôt git AUR il y a `delay_days` jours (cette révision a été exposée à
-     la communauté tout ce temps). Les mises à jour arrivent toujours, avec un
-     retard constant — pas de blocage permanent des paquets à maj fréquente.
-     L'AUR ne stockant aucun binaire, la révision est **buildée localement**
+1. **Whitelist** — trusted packages (signed binaries from reputable vendors):
+   the delay is skipped, but the static scan and AI review still apply.
+2. **Delay** — two semantics (`delay_mode`):
+   - **`lag`** (default): installs the PKGBUILD revision that was the `HEAD`
+     of the AUR git repository `delay_days` days ago (this revision has been
+     exposed to the community that whole time). Updates always arrive, with a
+     constant lag — no permanent blocking of frequently updated packages.
+     Since the AUR stores no binaries, the revision is **built locally**
      (`git checkout <commit>` + `makepkg -si`).
-   - **`hold`** : bloque toute maj dont la dernière version a moins de
-     `delay_days` jours ; reste sur la version installée (plus strict, mais un
-     paquet mis à jour plus souvent que le délai n'est jamais installé).
-3. **Garde anti-revert** (mode lag) — une version vérolée reste dans l'historique
-   git même après correction en place. On refuse donc une révision cible si elle
-   a été **annulée/nettoyée depuis** : soit un commit postérieur évoque une
-   compromission, soit un motif d'exécution dangereux (`| bash`, `base64 -d`,
-   `/dev/tcp/`…) présent dans la cible a disparu de la `HEAD` actuelle.
-4. **Scan statique** — délègue à [`aur-scan`](https://github.com/KiefStudioMA/ks-aur-scanner)
-   s'il est installé (70+ règles, base d'IOC). Une détection bloquante → refus.
-5. **Review IA** — envoie le *diff* du PKGBUILD à un LLM (Groq / OpenAI /
-   Anthropic, configurable) qui juge `safe / suspect` avec justification.
+   - **`hold`**: blocks any update whose latest version is less than
+     `delay_days` days old; stays on the installed version (stricter, but a
+     package updated more often than the delay is never installed).
+3. **Anti-revert guard** (lag mode) — a tainted version stays in the git history
+   even after an in-place fix. We therefore refuse a target revision if it has
+   been **reverted/cleaned up since**: either a later commit mentions a
+   compromise, or a dangerous execution pattern (`| bash`, `base64 -d`,
+   `/dev/tcp/`…) present in the target has disappeared from the current `HEAD`.
+4. **Static scan** — delegates to [`aur-scan`](https://github.com/KiefStudioMA/ks-aur-scanner)
+   if installed (70+ rules, IOC database). A blocking detection → refusal.
+5. **AI review** — sends the PKGBUILD *diff* to an LLM (Groq / OpenAI /
+   Anthropic, configurable) which judges it `safe / suspect` with justification.
 
-Seuls les paquets qui passent les quatre étapes sont proposés à l'installation.
+Only packages that pass all four steps are offered for installation.
 
-## Multi-vote IA (économie de frais)
+## AI multi-vote (cost savings)
 
-La review IA n'appelle le modèle **qu'une fois** quand le paquet est jugé sûr
-(cas courant). Un blocage déclenche des votes supplémentaires (jusqu'à
-`confirm_votes` au total) et n'est confirmé qu'à la **majorité stricte** — ce qui
-neutralise les faux positifs dus au non-déterminisme du modèle.
+The AI review calls the model **only once** when the package is judged safe
+(the common case). A block triggers additional votes (up to `confirm_votes`
+total) and is confirmed only by a **strict majority** — which neutralizes false
+positives caused by the model's non-determinism.
 
 ## Interfaces
 
-Trois frontends partagent le même cœur :
+Three frontends share the same core:
 
-- **CLI** — `aur-guard <commande>`
+- **CLI** — `aur-guard <command>`
 - **TUI** (terminal, ratatui) — `aur-guard config-ui`
-- **GUI** (GTK4 / libadwaita) — binaire `aur-guard-gui` : réglages éditables +
-  rapport des mises à jour (✅ sûr / ⏳ retardé / ⛔ bloqué) + installation.
+- **GUI** (GTK4 / libadwaita) — `aur-guard-gui` binary: editable settings +
+  update report (✅ safe / ⏳ delayed / ⛔ blocked) + installation.
 
-aur-guard **ne gère que les paquets AUR** (le contenu non vérifié). Les dépôts
-officiels d'Arch sont signés et hors de son périmètre. Pour éviter qu'on les
-mette à jour à part (et qu'on contourne la review AUR avec un `yay -Syu`), la
-commande `upgrade` enchaîne les deux : `pacman -Syu` puis les AUR sûrs.
+aur-guard **only handles AUR packages** (the unverified content). The official
+Arch repositories are signed and out of its scope. To avoid updating them
+separately (and bypassing the AUR review with a `yay -Syu`), the `upgrade`
+command chains both: `pacman -Syu` then the safe AUR packages.
 
 ```bash
-aur-guard            # rapport (alias de `check`), n'installe rien
-aur-guard check      # idem (+ rappel du nombre de maj officielles)
-aur-guard upgrade    # dépôts officiels (pacman -Syu) PUIS paquets AUR sûrs
-aur-guard apply      # uniquement les paquets AUR jugés sûrs
+aur-guard            # report (alias of `check`), installs nothing
+aur-guard check      # same (+ reminder of the number of official updates)
+aur-guard upgrade    # official repos (pacman -Syu) THEN safe AUR packages
+aur-guard apply      # only the AUR packages judged safe
 aur-guard apply --dry-run
-aur-guard status     # âge (dernière modif AUR) de tous les paquets AUR installés
-aur-guard config     # chemin + résumé de la configuration
-aur-guard config-ui  # interface de paramétrage en terminal (TUI)
-aur-guard install   # entrée de bureau + icône + traductions + timer de notification
-aur-guard review-file <PKGBUILD>  # (debug) review IA d'un fichier
+aur-guard status     # age (last AUR change) of all installed AUR packages
+aur-guard config     # path + summary of the configuration
+aur-guard config-ui  # terminal settings interface (TUI)
+aur-guard install   # desktop entry + icon + translations + notification timer
+aur-guard review-file <PKGBUILD>  # (debug) AI review of a file
 ```
 
 ## Configuration
 
-`~/.config/aur-guard/config.toml` (créé au premier lancement) :
+`~/.config/aur-guard/config.toml` (created on first launch):
 
 ```toml
 delay_days = 14
@@ -86,71 +85,71 @@ whitelist = ["google-chrome", "zen-browser-bin", "..."]
 [ai]
 enabled = true
 provider = "groq"      # groq | anthropic | openai
-model = ""              # vide => modèle par défaut du provider
-api_key_env = ""        # vide => GROQ_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY
+model = ""              # empty => provider's default model
+api_key_env = ""        # empty => GROQ_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY
 
 [notify]
-enabled = false             # timer systemd --user de notification de bureau
-interval_hours = 6          # périodicité de la vérification
+enabled = false             # systemd --user timer for desktop notifications
+interval_hours = 6          # check frequency
 silent_when_up_to_date = true
 ```
 
-La clé API n'est **jamais** stockée dans `config.toml`. Elle est résolue depuis
-la variable d'environnement du provider en priorité, sinon depuis un fichier
-dédié `~/.config/aur-guard/secrets.toml` (permissions `0600`), que l'on peut
-renseigner depuis les interfaces (GUI/TUI).
+The API key is **never** stored in `config.toml`. It is resolved from the
+provider's environment variable first, otherwise from a dedicated file
+`~/.config/aur-guard/secrets.toml` (permissions `0600`), which can be filled in
+from the interfaces (GUI/TUI).
 
-## Interfaces de paramétrage
+## Settings interfaces
 
-La GUI met les **mises à jour en page d'accueil** et regroupe les réglages dans
-une **page plein écran** séparée (bouton engrenage → navigation) : délai/mode/helper/scan, review IA
-(provider, **modèle**, **clé API**, votes) et **whitelist** (édition + suggestions
-des paquets AUR installés), et les **notifications** (activation, intervalle).
-La TUI (`aur-guard config-ui`) offre les mêmes réglages au clavier.
+The GUI puts **updates on the home page** and groups the settings into a
+separate **full-screen page** (gear button → navigation): delay/mode/helper/scan,
+AI review (provider, **model**, **API key**, votes), the **whitelist** (editing +
+suggestions from installed AUR packages), and **notifications** (enabling,
+interval). The TUI (`aur-guard config-ui`) offers the same settings via keyboard.
 
-## Intégration au bureau et notifications
+## Desktop integration and notifications
 
-`aur-guard install` installe l'entrée de menu (`.desktop`), l'icône et les
-traductions, puis met en place un timer systemd `--user`
-(`aur-guard-notify.timer`) qui exécute périodiquement `aur-guard notify` :
-celui-ci **compte** les mises à jour officielles et AUR disponibles (sans scan
-ni review IA, donc sans coût d'API) et envoie une notification via `notify-send`.
-L'activation et l'intervalle se règlent depuis la GUI/TUI ou la section
-`[notify]` du `config.toml` ; toute sauvegarde des réglages resynchronise le
-timer.
+`aur-guard install` installs the menu entry (`.desktop`), the icon, and the
+translations, then sets up a systemd `--user` timer
+(`aur-guard-notify.timer`) that periodically runs `aur-guard notify`: it
+**counts** the available official and AUR updates (without scan or AI review, so
+without API cost) and sends a notification via `notify-send`. Enabling and the
+interval are set from the GUI/TUI or the `[notify]` section of `config.toml`;
+any save of the settings re-syncs the timer.
 
-## Langues
+## Languages
 
-L'interface (CLI, TUI, GUI) est multilingue via gettext et suit la **locale
-système**. Anglais par défaut, français fourni. Pour installer les traductions :
+The interface (CLI, TUI, GUI) is multilingual via gettext and follows the
+**system locale**. English by default, French provided. To install the
+translations:
 
 ```bash
-po/install.sh            # compile po/*.po → ~/.local/share/locale/<lang>/…
+po/install.sh            # compiles po/*.po → ~/.local/share/locale/<lang>/…
 ```
 
 ## Build
 
 ```bash
-# CLI + TUI + GUI (défaut ; nécessite gtk4 et libadwaita ≥ 1.4)
+# CLI + TUI + GUI (default; requires gtk4 and libadwaita ≥ 1.4)
 cargo build --release
 
-# Tout-en-un : copie les binaires (~/.local/bin), pose l'entrée de menu +
-# l'icône (Exec en chemin absolu), installe les traductions et le timer de
-# notification. À lancer depuis l'arborescence buildée :
+# All-in-one: copies the binaries (~/.local/bin), installs the menu entry +
+# icon (Exec as an absolute path), installs the translations and the
+# notification timer. Run from the built tree:
 ./target/release/aur-guard install
 
-# Variante sans GUI (machine headless / CLI seule) :
+# Variant without GUI (headless machine / CLI only):
 cargo build --release --no-default-features --features tui
 ```
 
-> Sans la GUI (`--no-default-features`), seul le binaire CLI est copié et
-> l'entrée de menu est ignorée (le raccourci pointerait dans le vide).
+> Without the GUI (`--no-default-features`), only the CLI binary is copied and
+> the menu entry is skipped (the shortcut would point nowhere).
 
-## Limites
+## Limitations
 
-- Le délai retarde aussi des correctifs de sécurité légitimes → d'où la
-  whitelist pour les paquets de confiance.
-- Une compromission non détectée plus longtemps que `delay_days` passe au
-  travers du délai (mais pas forcément du scan / de la review IA).
-- La review IA dépend de la qualité du modèle ; elle complète, ne remplace pas,
-  la lecture humaine du diff.
+- The delay also delays legitimate security fixes → hence the whitelist for
+  trusted packages.
+- A compromise undetected for longer than `delay_days` slips through the delay
+  (but not necessarily through the scan / AI review).
+- The AI review depends on the model's quality; it complements, not replaces,
+  human reading of the diff.

@@ -1,15 +1,16 @@
-//! Configuration de aur-guard : délai, whitelist et paramètres de review IA.
-//! Le fichier vit dans ~/.config/aur-guard/config.toml et est créé avec des
-//! valeurs par défaut au premier lancement.
+//! aur-guard configuration: delay, whitelist and AI review settings.
+//! The file lives at ~/.config/aur-guard/config.toml and is created with
+//! default values on first launch.
 
+use crate::t;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// Permissions du fichier de secrets (lecture/écriture propriétaire seul).
+/// Secrets file permissions (owner read/write only).
 const SECRETS_MODE: u32 = 0o600;
 
-/// Fournisseur d'IA pour la review du diff PKGBUILD.
+/// AI provider for the PKGBUILD diff review.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Provider {
@@ -19,7 +20,7 @@ pub enum Provider {
 }
 
 impl Provider {
-    /// Endpoint HTTP de l'API chat du fournisseur.
+    /// HTTP endpoint of the provider's chat API.
     pub fn endpoint(&self) -> &'static str {
         match self {
             Provider::Groq => "https://api.groq.com/openai/v1/chat/completions",
@@ -28,7 +29,7 @@ impl Provider {
         }
     }
 
-    /// Nom de la variable d'environnement contenant la clé API par défaut.
+    /// Name of the environment variable holding the default API key.
     pub fn default_key_env(&self) -> &'static str {
         match self {
             Provider::Groq => "GROQ_API_KEY",
@@ -37,7 +38,7 @@ impl Provider {
         }
     }
 
-    /// Modèle par défaut raisonnable pour de l'analyse de sécurité.
+    /// A reasonable default model for security analysis.
     pub fn default_model(&self) -> &'static str {
         match self {
             Provider::Groq => "llama-3.3-70b-versatile",
@@ -49,19 +50,19 @@ impl Provider {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiConfig {
-    /// Active la review IA du diff PKGBUILD.
+    /// Enables the AI review of the PKGBUILD diff.
     pub enabled: bool,
-    /// Fournisseur sélectionné.
+    /// Selected provider.
     pub provider: Provider,
-    /// Modèle à utiliser (vide => default_model du provider).
+    /// Model to use (empty => provider's default_model).
     #[serde(default)]
     pub model: String,
-    /// Variable d'env contenant la clé API (vide => default_key_env du provider).
+    /// Env variable holding the API key (empty => provider's default_key_env).
     #[serde(default)]
     pub api_key_env: String,
-    /// Nombre total de votes (1er appel inclus) pour CONFIRMER un blocage.
-    /// Un verdict « sûr » au 1er appel ne déclenche aucun vote supplémentaire
-    /// (1 seul appel) ; seuls les blocages sont confirmés à la majorité.
+    /// Total number of votes (including the 1st call) to CONFIRM a block.
+    /// A "safe" verdict on the 1st call triggers no extra vote (a single call);
+    /// only blocks are confirmed by majority.
     #[serde(default = "default_confirm_votes")]
     pub confirm_votes: u32,
 }
@@ -100,16 +101,16 @@ impl AiConfig {
     }
 }
 
-/// Sémantique du délai de sécurité.
+/// Semantics of the security delay.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DelayMode {
-    /// Bloque toute maj dont la dernière version a moins de `delay_days`.
-    /// Reste sur la version installée (risque : paquets à maj fréquente jamais
-    /// mis à jour).
+    /// Blocks any update whose latest version is less than `delay_days` old.
+    /// Stays on the installed version (risk: frequently updated packages are
+    /// never upgraded).
     Hold,
-    /// Installe la révision qui était la HEAD du git AUR il y a `delay_days`
-    /// jours. Les maj arrivent toujours, avec un retard constant.
+    /// Installs the revision that was the AUR git HEAD `delay_days` days ago.
+    /// Updates always arrive, with a constant lag.
     Lag,
 }
 
@@ -117,24 +118,24 @@ fn default_delay_mode() -> DelayMode {
     DelayMode::Lag
 }
 
-/// Intervalle de notification par défaut (heures) : compromis entre fraîcheur
-/// de l'info et discrétion.
+/// Default notification interval (hours): a trade-off between freshness of the
+/// information and discretion.
 fn default_notify_interval() -> u64 {
     6
 }
 
-/// Réglages des notifications de bureau (timer systemd `--user`).
+/// Desktop notification settings (systemd `--user` timer).
 ///
-/// Le timer exécute `aur-guard notify`, qui compte les mises à jour officielles
-/// et AUR disponibles (sans review IA, donc sans coût) et appelle `notify-send`.
+/// The timer runs `aur-guard notify`, which counts the available official and
+/// AUR updates (without the AI review, hence at no cost) and calls `notify-send`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotifyConfig {
-    /// Le timer de notification doit-il être actif.
+    /// Whether the notification timer should be active.
     pub enabled: bool,
-    /// Périodicité de la vérification, en heures.
+    /// How often to check, in hours.
     #[serde(default = "default_notify_interval")]
     pub interval_hours: u64,
-    /// Ne rien notifier quand le système est à jour (sinon notification discrète).
+    /// Send nothing when the system is up to date (otherwise a quiet notification).
     #[serde(default)]
     pub silent_when_up_to_date: bool,
 }
@@ -151,20 +152,20 @@ impl Default for NotifyConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    /// Nombre de jours pendant lesquels une maj fraîche est retardée.
+    /// Number of days a fresh update is delayed.
     pub delay_days: u64,
-    /// Sémantique du délai (hold ou lag).
+    /// Delay semantics (hold or lag).
     #[serde(default = "default_delay_mode")]
     pub delay_mode: DelayMode,
-    /// Helper AUR à utiliser pour lister et installer (yay/paru).
+    /// AUR helper to use for listing and installing (yay/paru).
     pub helper: String,
-    /// Active l'appel à `aur-scan` (analyse statique) s'il est installé.
+    /// Enables calling `aur-scan` (static analysis) if installed.
     pub use_aur_scan: bool,
-    /// Paquets de confiance de l'utilisateur : maj immédiate, délai ignoré.
-    /// (La review IA / le scan statique s'appliquent quand même.)
+    /// The user's trusted packages: immediate update, delay skipped.
+    /// (The AI review / static scan still apply.)
     pub whitelist: Vec<String>,
     pub ai: AiConfig,
-    /// Réglages des notifications de bureau.
+    /// Desktop notification settings.
     #[serde(default)]
     pub notify: NotifyConfig,
 }
@@ -183,10 +184,10 @@ impl Default for Config {
     }
 }
 
-/// Whitelist recommandée : paquets `-bin` qui repackagent un binaire signé d'un
-/// éditeur réputé. Pour eux le délai retarderait surtout des correctifs de
-/// sécurité légitimes ; on les met à jour vite MAIS on garde scan + review IA
-/// (car le PKGBUILD reste le vecteur d'attaque possible).
+/// Recommended whitelist: `-bin` packages that repackage a signed binary from a
+/// reputable vendor. For them the delay would mostly hold back legitimate
+/// security fixes; we update them quickly BUT keep the scan + AI review (since
+/// the PKGBUILD remains a possible attack vector).
 pub fn recommended_whitelist() -> Vec<String> {
     [
         "google-chrome",
@@ -211,25 +212,25 @@ pub fn recommended_whitelist() -> Vec<String> {
 }
 
 impl Config {
-    /// Chemin du fichier de configuration.
+    /// Path of the configuration file.
     pub fn path() -> Result<PathBuf> {
-        let base = dirs::config_dir().context("impossible de résoudre ~/.config")?;
+        let base = dirs::config_dir().context("cannot resolve ~/.config")?;
         Ok(base.join("aur-guard").join("config.toml"))
     }
 
-    /// Charge la config, en créant un fichier par défaut si absent.
+    /// Loads the config, creating a default file if missing.
     pub fn load_or_init() -> Result<Config> {
         let path = Self::path()?;
         if !path.exists() {
             let cfg = Config::default();
             cfg.save()?;
-            eprintln!("Config par défaut créée : {}", path.display());
+            eprintln!("{}", t!("Default config created: {}", path.display()));
             return Ok(cfg);
         }
         let text = std::fs::read_to_string(&path)
-            .with_context(|| format!("lecture de {}", path.display()))?;
+            .with_context(|| format!("reading {}", path.display()))?;
         let cfg: Config =
-            toml::from_str(&text).with_context(|| format!("parsing TOML de {}", path.display()))?;
+            toml::from_str(&text).with_context(|| format!("parsing TOML of {}", path.display()))?;
         Ok(cfg)
     }
 
@@ -239,7 +240,7 @@ impl Config {
             std::fs::create_dir_all(parent)?;
         }
         let text = toml::to_string_pretty(self)?;
-        std::fs::write(&path, text).with_context(|| format!("écriture de {}", path.display()))?;
+        std::fs::write(&path, text).with_context(|| format!("writing {}", path.display()))?;
         Ok(())
     }
 
@@ -248,8 +249,8 @@ impl Config {
     }
 }
 
-/// Clés API des fournisseurs, stockées hors de `config.toml` dans un fichier à
-/// permissions restreintes. **Jamais** versionné ni journalisé.
+/// Provider API keys, stored outside `config.toml` in a file with restricted
+/// permissions. **Never** versioned or logged.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Secrets {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -262,11 +263,11 @@ pub struct Secrets {
 
 impl Secrets {
     pub fn path() -> Result<PathBuf> {
-        let base = dirs::config_dir().context("impossible de résoudre ~/.config")?;
+        let base = dirs::config_dir().context("cannot resolve ~/.config")?;
         Ok(base.join("aur-guard").join("secrets.toml"))
     }
 
-    /// Charge les secrets (structure vide si le fichier est absent).
+    /// Loads the secrets (empty struct if the file is missing).
     pub fn load() -> Secrets {
         let Ok(path) = Self::path() else {
             return Secrets::default();
@@ -277,14 +278,14 @@ impl Secrets {
             .unwrap_or_default()
     }
 
-    /// Écrit les secrets avec des permissions `0600`.
+    /// Writes the secrets with `0600` permissions.
     pub fn save(&self) -> Result<()> {
         let path = Self::path()?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         let text = toml::to_string_pretty(self)?;
-        std::fs::write(&path, text).with_context(|| format!("écriture de {}", path.display()))?;
+        std::fs::write(&path, text).with_context(|| format!("writing {}", path.display()))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -302,7 +303,7 @@ impl Secrets {
     }
 
     pub fn set(&mut self, provider: Provider, key: Option<String>) {
-        // Une chaîne vide efface la clé.
+        // An empty string clears the key.
         let key = key.filter(|k| !k.trim().is_empty());
         match provider {
             Provider::Groq => self.groq = key,
@@ -312,8 +313,8 @@ impl Secrets {
     }
 }
 
-/// Résout la clé API à utiliser : variable d'environnement en priorité, sinon
-/// le fichier de secrets. Renvoie None si aucune n'est disponible.
+/// Resolves the API key to use: environment variable first, otherwise the
+/// secrets file. Returns None if none is available.
 pub fn resolve_api_key(ai: &AiConfig) -> Option<String> {
     if let Ok(key) = std::env::var(ai.key_env_or_default()) {
         if !key.is_empty() {

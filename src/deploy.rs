@@ -1,10 +1,10 @@
-//! Intégration système : entrée de bureau, icône, catalogues de traduction et
-//! le timer systemd `--user` qui déclenche les notifications de mise à jour.
+//! System integration: desktop entry, icon, translation catalogs and the
+//! systemd `--user` timer that triggers update notifications.
 //!
-//! Tout l'I/O d'installation (écriture de fichiers dans `~/.local/share`,
-//! `~/.config/systemd/user`, appels à `systemctl`/`msgfmt`/`notify-send`) est
-//! centralisé ici : les frontends ne font qu'appeler ces fonctions et présenter
-//! le résultat.
+//! All installation I/O (writing files to `~/.local/share`,
+//! `~/.config/systemd/user`, calls to `systemctl`/`msgfmt`/`notify-send`) is
+//! centralised here: the frontends only call these functions and present the
+//! result.
 
 use crate::config::{Config, NotifyConfig};
 use crate::{aur, t};
@@ -12,42 +12,42 @@ use anyhow::{Context, Result};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-/// Identifiant d'application (entrée de bureau, icône, métadonnées).
+/// Application identifier (desktop entry, icon, metadata).
 const APP_ID: &str = "fr.xhelliom.AurGuard";
-/// Nom du binaire CLI.
+/// Name of the CLI binary.
 const BIN_CLI: &str = "aur-guard";
-/// Nom du binaire GUI (lancé par l'entrée de bureau).
+/// Name of the GUI binary (launched by the desktop entry).
 const BIN_GUI: &str = "aur-guard-gui";
-/// Permissions des binaires installés (rwxr-xr-x).
+/// Permissions of installed binaries (rwxr-xr-x).
 const BIN_MODE: u32 = 0o755;
-/// Domaine gettext (doit correspondre à `i18n::init`).
+/// gettext domain (must match `i18n::init`).
 const GETTEXT_DOMAIN: &str = "aur-guard";
-/// Nom de base des unités systemd de notification (`.service` / `.timer`).
+/// Base name of the notification systemd units (`.service` / `.timer`).
 const NOTIFY_UNIT: &str = "aur-guard-notify";
-/// Délai après le démarrage avant la première vérification.
+/// Delay after boot before the first check.
 const NOTIFY_BOOT_DELAY: &str = "2min";
 
-/// Entrée de bureau et icône, embarquées dans le binaire pour que la commande
-/// `install` soit autonome (pas besoin de l'arborescence source à l'exécution).
+/// Desktop entry and icon, embedded in the binary so the `install` command is
+/// self-contained (no need for the source tree at runtime).
 const DESKTOP_BYTES: &[u8] = include_bytes!("../data/fr.xhelliom.AurGuard.desktop");
 const ICON_BYTES: &[u8] = include_bytes!("../data/fr.xhelliom.AurGuard.svg");
 
-/// Catalogues de traduction source, compilés à l'installation via `msgfmt`.
-/// `(code_langue, contenu_po)`.
+/// Source translation catalogs, compiled at install time via `msgfmt`.
+/// `(language_code, po_content)`.
 const CATALOGS: &[(&str, &str)] = &[("fr", include_str!("../po/fr.po"))];
 
-/// Racine des données utilisateur (`$XDG_DATA_HOME` ou `~/.local/share`).
+/// Root of user data (`$XDG_DATA_HOME` or `~/.local/share`).
 fn data_home() -> Result<PathBuf> {
-    dirs::data_dir().context("impossible de résoudre ~/.local/share")
+    dirs::data_dir().context("cannot resolve ~/.local/share")
 }
 
-/// Répertoire des unités systemd utilisateur (`~/.config/systemd/user`).
+/// User systemd units directory (`~/.config/systemd/user`).
 fn systemd_user_dir() -> Result<PathBuf> {
-    let base = dirs::config_dir().context("impossible de résoudre ~/.config")?;
+    let base = dirs::config_dir().context("cannot resolve ~/.config")?;
     Ok(base.join("systemd/user"))
 }
 
-/// Chemin absolu du binaire courant, pour le baker dans l'unité systemd.
+/// Absolute path of the current binary, to bake into the systemd unit.
 fn current_exe() -> String {
     std::env::current_exe()
         .ok()
@@ -55,21 +55,21 @@ fn current_exe() -> String {
         .unwrap_or_else(|| GETTEXT_DOMAIN.to_string())
 }
 
-/// Copie les binaires (`aur-guard`, et `aur-guard-gui` s'il a été compilé) dans
-/// le répertoire des exécutables utilisateur (`~/.local/bin`).
+/// Copies the binaries (`aur-guard`, and `aur-guard-gui` if it was built) into
+/// the user executables directory (`~/.local/bin`).
 ///
-/// Renvoie `true` si le binaire GUI est disponible à l'arrivée (fraîchement
-/// copié ou déjà présent) : l'appelant ne pose l'entrée de menu que dans ce cas,
-/// pour ne pas créer un raccourci pointant vers un binaire absent.
+/// Returns `true` if the GUI binary is available afterwards (freshly copied or
+/// already present): the caller only installs the menu entry in that case, so as
+/// not to create a shortcut pointing to a missing binary.
 pub fn install_binaries() -> Result<bool> {
-    let dest_dir = dirs::executable_dir().context("impossible de résoudre ~/.local/bin")?;
+    let dest_dir = dirs::executable_dir().context("cannot resolve ~/.local/bin")?;
     std::fs::create_dir_all(&dest_dir)
-        .with_context(|| format!("création de {}", dest_dir.display()))?;
+        .with_context(|| format!("creating {}", dest_dir.display()))?;
     let src_dir = std::env::current_exe()
-        .context("résolution du binaire courant")?
+        .context("resolving the current binary")?
         .parent()
         .map(|p| p.to_path_buf())
-        .context("le binaire courant n'a pas de répertoire parent")?;
+        .context("the current binary has no parent directory")?;
 
     install_one_binary(&src_dir, &dest_dir, BIN_CLI)?;
     let gui_dest = dest_dir.join(BIN_GUI);
@@ -77,9 +77,9 @@ pub fn install_binaries() -> Result<bool> {
     Ok(gui_dest.exists())
 }
 
-/// Copie un binaire depuis `src_dir` vers `dest_dir` s'il existe à la source et
-/// que ce n'est pas déjà le même fichier (copier un binaire sur lui-même le
-/// tronquerait). Absence à la source = rien à faire (pas une erreur).
+/// Copies a binary from `src_dir` to `dest_dir` if it exists at the source and
+/// is not already the same file (copying a binary onto itself would truncate it).
+/// Missing at the source = nothing to do (not an error).
 fn install_one_binary(
     src_dir: &std::path::Path,
     dest_dir: &std::path::Path,
@@ -90,32 +90,32 @@ fn install_one_binary(
         return Ok(());
     }
     let dest = dest_dir.join(name);
-    // Même chemin (on tourne déjà depuis ~/.local/bin) : ne rien copier.
+    // Same path (we are already running from ~/.local/bin): copy nothing.
     if std::fs::canonicalize(&src).ok() == std::fs::canonicalize(&dest).ok() && dest.exists() {
         return Ok(());
     }
-    // Écriture temporaire puis rename atomique : remplacer directement un binaire
-    // en cours d'exécution échouerait (ETXTBSY) ; le rename ne touche que l'entrée
-    // de répertoire, le process en cours garde son ancien inode.
+    // Temporary write then atomic rename: directly replacing a running binary
+    // would fail (ETXTBSY); the rename only touches the directory entry, the
+    // running process keeps its old inode.
     let tmp = dest_dir.join(format!(".{name}.new"));
     std::fs::copy(&src, &tmp)
-        .with_context(|| format!("copie de {} vers {}", src.display(), tmp.display()))?;
+        .with_context(|| format!("copying {} to {}", src.display(), tmp.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(BIN_MODE))?;
     }
     if let Err(e) = std::fs::rename(&tmp, &dest) {
-        let _ = std::fs::remove_file(&tmp); // nettoyage best-effort
-        return Err(e).with_context(|| format!("installation de {}", dest.display()));
+        let _ = std::fs::remove_file(&tmp); // best-effort cleanup
+        return Err(e).with_context(|| format!("installing {}", dest.display()));
     }
     Ok(())
 }
 
-/// Chemin absolu d'un binaire installé dans `~/.local/bin`, ou son nom nu en
-/// dernier recours (binaire absent / `~/.local/bin` non résolu). Les lanceurs
-/// graphiques — et `bash -c` non interactif — n'ont souvent pas `~/.local/bin`
-/// dans leur PATH : un nom nu ne s'y résoudrait pas, d'où la préférence absolue.
+/// Absolute path of a binary installed in `~/.local/bin`, or its bare name as a
+/// last resort (binary missing / `~/.local/bin` unresolved). Graphical launchers
+/// — and non-interactive `bash -c` — often do not have `~/.local/bin` in their
+/// PATH: a bare name would not resolve there, hence the preference for absolute.
 fn installed_binary(name: &str) -> String {
     dirs::executable_dir()
         .map(|d| d.join(name))
@@ -124,19 +124,19 @@ fn installed_binary(name: &str) -> String {
         .unwrap_or_else(|| name.to_string())
 }
 
-/// Commande à utiliser pour lancer le binaire CLI `aur-guard`, sous forme de
-/// chemin absolu quand il est installé. Destinée aux frontends qui démarrent le
-/// CLI dans un terminal externe, dont le PATH n'inclut pas `~/.local/bin`.
+/// Command to use to launch the `aur-guard` CLI binary, as an absolute path when
+/// it is installed. Intended for frontends that start the CLI in an external
+/// terminal whose PATH does not include `~/.local/bin`.
 pub fn cli_command() -> String {
     installed_binary(BIN_CLI)
 }
 
-/// Installe l'entrée de bureau et l'icône dans `~/.local/share`.
+/// Installs the desktop entry and icon into `~/.local/share`.
 ///
-/// Rend l'application visible dans le menu et associe son icône. La ligne `Exec`
-/// embarquée (`aur-guard-gui` nu) est réécrite avec le **chemin absolu** du
-/// binaire installé : les lanceurs graphiques n'ont souvent pas `~/.local/bin`
-/// dans leur PATH, une commande nue ne s'y résoudrait pas.
+/// Makes the application visible in the menu and associates its icon. The
+/// embedded `Exec` line (bare `aur-guard-gui`) is rewritten with the **absolute
+/// path** of the installed binary: graphical launchers often do not have
+/// `~/.local/bin` in their PATH, so a bare command would not resolve there.
 pub fn install_desktop_entry() -> Result<()> {
     let share = data_home()?;
     let desktop = share.join("applications").join(format!("{APP_ID}.desktop"));
@@ -153,10 +153,10 @@ pub fn install_desktop_entry() -> Result<()> {
     Ok(())
 }
 
-/// Compile et installe les catalogues de traduction (`msgfmt`).
+/// Compiles and installs the translation catalogs (`msgfmt`).
 ///
-/// L'absence de `msgfmt` n'est pas fatale : on avertit et on continue (les
-/// chaînes retombent alors sur l'anglais source).
+/// A missing `msgfmt` is not fatal: we warn and continue (the strings then fall
+/// back to the English source).
 pub fn install_locales() -> Result<()> {
     let share = data_home()?;
     for (lang, po) in CATALOGS {
@@ -167,9 +167,9 @@ pub fn install_locales() -> Result<()> {
             .join(format!("{GETTEXT_DOMAIN}.mo"));
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent)
-                .with_context(|| format!("création de {}", parent.display()))?;
+                .with_context(|| format!("creating {}", parent.display()))?;
         }
-        // `msgfmt - -o <dest>` lit le .po sur stdin : pas de fichier temporaire.
+        // `msgfmt - -o <dest>` reads the .po from stdin: no temporary file.
         let res = Command::new("msgfmt")
             .arg("-")
             .arg("-o")
@@ -197,14 +197,14 @@ pub fn install_locales() -> Result<()> {
     Ok(())
 }
 
-/// Écrit (ou rafraîchit) les unités systemd de notification puis active ou
-/// désactive le timer selon `cfg.enabled`.
+/// Writes (or refreshes) the notification systemd units then enables or disables
+/// the timer depending on `cfg.enabled`.
 ///
-/// Le service exécute `<exe> notify` : toute la logique de notification est en
-/// Rust, rien n'est baké en dur dans une chaîne shell.
+/// The service runs `<exe> notify`: all the notification logic is in Rust,
+/// nothing is hard-baked into a shell string.
 pub fn apply_notify(cfg: &NotifyConfig) -> Result<()> {
     let dir = systemd_user_dir()?;
-    std::fs::create_dir_all(&dir).with_context(|| format!("création de {}", dir.display()))?;
+    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
     let exe = current_exe();
 
     let service = format!(
@@ -241,10 +241,10 @@ pub fn apply_notify(cfg: &NotifyConfig) -> Result<()> {
     Ok(())
 }
 
-/// Calcule les compteurs de mises à jour et envoie une notification de bureau.
+/// Computes the update counts and sends a desktop notification.
 ///
-/// Léger par construction : compte les maj officielles et AUR *disponibles*
-/// sans déclencher de scan ni de review IA (donc aucun coût d'API sur le timer).
+/// Lightweight by design: counts the *available* official and AUR updates without
+/// triggering a scan or AI review (hence no API cost on the timer).
 pub fn send_notification(cfg: &Config) -> Result<()> {
     let official = aur::official_updates().len();
     let aur = aur::list_updates(&cfg.helper).map(|u| u.len()).unwrap_or(0);
@@ -261,9 +261,9 @@ pub fn send_notification(cfg: &Config) -> Result<()> {
     Ok(())
 }
 
-/// Envoie immédiatement une notification de test, **toujours visible** (quel que
-/// soit l'état des mises à jour), pour vérifier que `notify-send` et le démon de
-/// notifications du bureau fonctionnent.
+/// Immediately sends a test notification, **always visible** (whatever the state
+/// of the updates), to check that `notify-send` and the desktop notification
+/// daemon work.
 pub fn send_test_notification() {
     notify_send(
         "normal",
@@ -272,16 +272,16 @@ pub fn send_test_notification() {
     );
 }
 
-/// Écrit un fichier en créant ses répertoires parents au besoin.
+/// Writes a file, creating its parent directories as needed.
 fn write_file(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
-            .with_context(|| format!("création de {}", parent.display()))?;
+            .with_context(|| format!("creating {}", parent.display()))?;
     }
-    std::fs::write(path, bytes).with_context(|| format!("écriture de {}", path.display()))
+    std::fs::write(path, bytes).with_context(|| format!("writing {}", path.display()))
 }
 
-/// Appelle `systemctl --user <args>` ; un échec est journalisé, jamais fatal.
+/// Calls `systemctl --user <args>`; a failure is logged, never fatal.
 fn run_systemctl(args: &[&str]) {
     let res = Command::new("systemctl").arg("--user").args(args).status();
     if let Ok(status) = res {
@@ -296,7 +296,7 @@ fn run_systemctl(args: &[&str]) {
     }
 }
 
-/// Appelle `notify-send` ; l'absence de l'outil n'est pas fatale.
+/// Calls `notify-send`; a missing tool is not fatal.
 fn notify_send(urgency: &str, title: &str, body: &str) {
     let _ = Command::new("notify-send")
         .args(["-u", urgency, title, body])

@@ -370,8 +370,8 @@ fn cmd_install() -> Result<()> {
     let gui_available = aur_guard::deploy::install_binaries()?;
     println!("{}", t!("Binaries installed in ~/.local/bin."));
 
-    // L'entrée de menu lance la GUI : ne la poser que si la GUI est disponible,
-    // sinon le raccourci pointerait dans le vide.
+    // The menu entry launches the GUI: only install it when the GUI is
+    // available, otherwise the shortcut would point to nothing.
     if gui_available {
         aur_guard::deploy::install_desktop_entry()?;
         println!("{}", t!("Desktop entry and icon installed."));
