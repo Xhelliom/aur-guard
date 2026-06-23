@@ -1,6 +1,6 @@
-//! Interface de paramétrage en terminal (ratatui).
-//! Édite les réglages principaux + la whitelist (avec suggestions), et les
-//! enregistre. Les clés API vont dans le fichier de secrets, pas dans la config.
+//! Terminal settings UI (ratatui).
+//! Edits the main settings + the whitelist (with suggestions), and saves them.
+//! API keys go into the secrets file, not into the config.
 
 use crate::config::{Config, DelayMode, Provider, Secrets};
 use crate::{aur, deploy, t};
@@ -20,7 +20,7 @@ use ratatui::{
 };
 use std::io;
 
-// Index des champs de l'écran principal.
+// Field indices of the main screen.
 const F_DELAY: usize = 0;
 const F_MODE: usize = 1;
 const F_HELPER: usize = 2;
@@ -40,7 +40,7 @@ const FIELDS: usize = 14;
 const DELAY_MAX: u64 = 365;
 const VOTES_MIN: u32 = 1;
 const VOTES_MAX: u32 = 9;
-/// Bornes de l'intervalle de notification (heures) : 1 h à une semaine.
+/// Bounds of the notification interval (hours): 1 h to one week.
 const NOTIFY_INTERVAL_MIN: u64 = 1;
 const NOTIFY_INTERVAL_MAX: u64 = 168;
 
@@ -75,7 +75,7 @@ impl App {
         }
     }
 
-    /// Suggestions = paquets AUR installés absents de la whitelist.
+    /// Suggestions = installed AUR packages not in the whitelist.
     fn suggestions(&self) -> Vec<String> {
         self.installed
             .iter()
@@ -199,7 +199,7 @@ fn onoff(b: bool) -> String {
     }
 }
 
-/// Lance la TUI de configuration.
+/// Launches the configuration TUI.
 pub fn run(cfg: Config) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -241,9 +241,9 @@ fn event_loop<B: ratatui::backend::Backend>(
     Ok(())
 }
 
-/// Touches de l'écran principal. Renvoie true s'il faut quitter.
+/// Main screen keys. Returns true if we should quit.
 fn main_keys(app: &mut App, code: KeyCode) -> bool {
-    // Mode saisie d'un champ texte (modèle / clé API).
+    // Text-field input mode (model / API key).
     if let Some(buf) = app.input.as_mut() {
         match code {
             KeyCode::Char(c) => buf.push(c),
@@ -253,7 +253,7 @@ fn main_keys(app: &mut App, code: KeyCode) -> bool {
             KeyCode::Enter => commit_text_field(app),
             KeyCode::Esc => {
                 app.input = None;
-                app.status = "Saisie annulée".into();
+                app.status = t!("Input cancelled");
             }
             _ => {}
         }
@@ -302,7 +302,7 @@ fn main_keys(app: &mut App, code: KeyCode) -> bool {
     false
 }
 
-/// Valide le champ texte en cours d'édition (modèle ou clé API).
+/// Commits the text field being edited (model or API key).
 fn commit_text_field(app: &mut App) {
     let Some(buf) = app.input.take() else {
         return;
@@ -330,7 +330,7 @@ fn commit_text_field(app: &mut App) {
 }
 
 fn whitelist_keys(app: &mut App, code: KeyCode) {
-    // Mode saisie d'un nouveau paquet.
+    // Input mode for a new package.
     if let Some(buf) = app.input.as_mut() {
         match code {
             KeyCode::Char(c) => buf.push(c),
@@ -398,7 +398,7 @@ fn save(app: &mut App) {
     app.status = match app.cfg.save() {
         Ok(_) => {
             app.dirty = false;
-            // Synchronise le timer systemd de notification avec les réglages.
+            // Sync the notification systemd timer with the settings.
             match deploy::apply_notify(&app.cfg.notify) {
                 Ok(_) => t!("✔ Configuration saved"),
                 Err(e) => t!("Saved, but notification setup failed: {}", e),
@@ -476,7 +476,7 @@ fn render_main(f: &mut ratatui::Frame, app: &App, area: ratatui::layout::Rect) {
     f.render_widget(list, area);
 }
 
-/// Affichage du buffer en cours d'édition (clé API masquée).
+/// Displays the buffer being edited (API key masked).
 fn edit_buffer_display(app: &App, field: usize) -> String {
     let buf = app.input.as_deref().unwrap_or("");
     if field == F_APIKEY {

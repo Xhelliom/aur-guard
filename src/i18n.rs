@@ -1,13 +1,13 @@
-//! Internationalisation via gettext. La langue suit la locale système.
-//! Les chaînes source sont en anglais (msgid) ; les traductions vivent dans
-//! `po/<lang>.po`, compilées en `<datadir>/locale/<lang>/LC_MESSAGES/aur-guard.mo`.
+//! Internationalisation via gettext. The language follows the system locale.
+//! Source strings are in English (msgid); translations live in
+//! `po/<lang>.po`, compiled to `<datadir>/locale/<lang>/LC_MESSAGES/aur-guard.mo`.
 
 use gettextrs::{bindtextdomain, setlocale, textdomain, LocaleCategory};
 use std::path::PathBuf;
 
 const DOMAIN: &str = "aur-guard";
 
-/// Initialise gettext. À appeler une fois au démarrage de chaque binaire.
+/// Initialise gettext. Call once at the startup of each binary.
 pub fn init() {
     setlocale(LocaleCategory::LcAll, "");
     let dir = dirs::data_dir()
@@ -17,12 +17,12 @@ pub fn init() {
     let _ = textdomain(DOMAIN);
 }
 
-/// Traduit un message simple.
+/// Translates a simple message.
 pub fn tr(msgid: &str) -> String {
     gettextrs::gettext(msgid)
 }
 
-/// Traduit puis remplace séquentiellement les `{}` par les arguments.
+/// Translates, then sequentially replaces each `{}` with the given arguments.
 pub fn trf(msgid: &str, args: &[String]) -> String {
     let mut s = gettextrs::gettext(msgid);
     for arg in args {
@@ -33,9 +33,9 @@ pub fn trf(msgid: &str, args: &[String]) -> String {
     s
 }
 
-/// Macro de traduction.
-/// - `t!("English text")` → message simple.
-/// - `t!("Found {} items", n)` → interpolation positionnelle des `{}`.
+/// Translation macro.
+/// - `t!("English text")` → simple message.
+/// - `t!("Found {} items", n)` → positional interpolation of each `{}`.
 #[macro_export]
 macro_rules! t {
     ($id:literal) => { $crate::i18n::tr($id) };

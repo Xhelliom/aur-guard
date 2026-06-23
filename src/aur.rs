@@ -1,6 +1,7 @@
-//! Interactions avec l'AUR : liste des mises à jour, date de dernière
-//! modification (API RPC) et récupération du diff de PKGBUILD.
+//! Interactions with the AUR: list of updates, last-modified date
+//! (RPC API) and retrieval of the PKGBUILD diff.
 
+use crate::t;
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -8,19 +9,19 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Nombre de secondes dans une journée.
+/// Number of seconds in a day.
 pub const SECS_PER_DAY: u64 = 86_400;
-/// Marqueur de version non résolvable statiquement (paquets VCS, ex. `-git`).
+/// Marker for a version that cannot be resolved statically (VCS packages, e.g. `-git`).
 pub const DYNAMIC_VERSION: &str = "?";
 
-/// Hôte de l'AUR (API RPC, dépôts git, PKGBUILD bruts).
+/// AUR host (RPC API, git repositories, raw PKGBUILDs).
 const AUR_HOST: &str = "https://aur.archlinux.org";
-/// User-Agent envoyé aux requêtes HTTP vers l'AUR.
+/// User-Agent sent on HTTP requests to the AUR.
 const USER_AGENT: &str = "aur-guard";
-/// Nombre maximum de paquets par requête RPC (limite la longueur d'URL).
+/// Maximum number of packages per RPC request (bounds the URL length).
 const RPC_BATCH: usize = 50;
 
-/// Une mise à jour AUR disponible.
+/// An available AUR update.
 #[derive(Debug, Clone)]
 pub struct Update {
     pub name: String,
@@ -28,7 +29,7 @@ pub struct Update {
     pub new_ver: String,
 }
 
-/// Horodatage Unix courant (secondes).
+/// Current Unix timestamp (seconds).
 pub fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -36,14 +37,14 @@ pub fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-/// Liste les mises à jour AUR via `<helper> -Qua`.
-/// Sortie attendue : "nom ancienne -> nouvelle".
+/// Lists AUR updates via `<helper> -Qua`.
+/// Expected output: "name old -> new".
 pub fn list_updates(helper: &str) -> Result<Vec<Update>> {
     let out = Command::new(helper)
         .args(["-Qua"])
         .output()
-        .with_context(|| format!("exécution de `{helper} -Qua`"))?;
-    // -Qua renvoie un code non-zéro quand il n'y a aucune maj : on ignore.
+        .with_context(|| format!("running `{helper} -Qua`"))?;
+    // -Qua returns a non-zero code when there is no update: we ignore it.
     let text = String::from_utf8_lossy(&out.stdout);
     let mut updates = Vec::new();
     for line in text.lines() {
@@ -66,7 +67,7 @@ pub fn list_updates(helper: &str) -> Result<Vec<Update>> {
     Ok(updates)
 }
 
-/// Métadonnées AUR utiles d'un paquet.
+/// Useful AUR metadata for a package.
 #[derive(Debug, Clone)]
 pub struct PkgInfo {
     pub package_base: String,
@@ -88,14 +89,14 @@ struct RpcResponse {
     results: Vec<RpcInfo>,
 }
 
-/// Récupère les métadonnées (PackageBase, LastModified) via l'API RPC v5.
+/// Fetches the metadata (PackageBase, LastModified) via the RPC v5 API.
 pub fn fetch_infos(names: &[String]) -> Result<HashMap<String, PkgInfo>> {
     let mut map = HashMap::new();
     if names.is_empty() {
         return Ok(map);
     }
-    // L'API accepte plusieurs arg[]= ; on découpe par lots pour éviter une URL
-    // trop longue.
+    // The API accepts multiple arg[]= ; we split into batches to avoid an
+    // overly long URL.
     for chunk in names.chunks(RPC_BATCH) {
         let query: String = chunk
             .iter()
@@ -106,9 +107,9 @@ pub fn fetch_infos(names: &[String]) -> Result<HashMap<String, PkgInfo>> {
         let resp: RpcResponse = ureq::get(&url)
             .set("User-Agent", USER_AGENT)
             .call()
-            .with_context(|| "appel API AUR RPC")?
+            .with_context(|| "AUR RPC API call")?
             .into_json()
-            .context("parsing JSON RPC")?;
+            .context("parsing RPC JSON")?;
         for info in resp.results {
             map.insert(
                 info.name,
@@ -122,9 +123,9 @@ pub fn fetch_infos(names: &[String]) -> Result<HashMap<String, PkgInfo>> {
     Ok(map)
 }
 
-/// Liste les mises à jour des dépôts officiels via `checkupdates`
-/// (format « nom ancienne -> nouvelle »). Ces paquets sont signés et hors du
-/// périmètre de review d'aur-guard.
+/// Lists official-repo updates via `checkupdates`
+/// (format "name old -> new"). These packages are signed and outside
+/// aur-guard's review scope.
 pub fn official_updates() -> Vec<String> {
     Command::new("checkupdates")
         .output()
@@ -139,7 +140,7 @@ pub fn official_updates() -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Liste les paquets AUR (« foreign ») installés via `pacman -Qmq`.
+/// Lists the installed AUR ("foreign") packages via `pacman -Qmq`.
 pub fn installed_aur_packages() -> Vec<String> {
     Command::new("pacman")
         .args(["-Qmq"])
@@ -156,7 +157,7 @@ pub fn installed_aur_packages() -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Map nom -> timestamp `LastModified` (utilisé par la commande `status`).
+/// Map name -> `LastModified` timestamp (used by the `status` command).
 pub fn last_modified(names: &[String]) -> Result<HashMap<String, u64>> {
     Ok(fetch_infos(names)?
         .into_iter()
@@ -164,8 +165,8 @@ pub fn last_modified(names: &[String]) -> Result<HashMap<String, u64>> {
         .collect())
 }
 
-/// Encodage URL minimal (les noms de paquets AUR contiennent rarement des
-/// caractères spéciaux, mais on gère `+` et quelques autres).
+/// Minimal URL encoding (AUR package names rarely contain special characters,
+/// but we handle `+` and a few others).
 fn urlencode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
@@ -179,7 +180,7 @@ fn urlencode(s: &str) -> String {
     out
 }
 
-/// Télécharge le PKGBUILD courant d'un paquet depuis l'AUR.
+/// Downloads a package's current PKGBUILD from the AUR.
 pub fn fetch_remote_pkgbuild(name: &str) -> Result<String> {
     let url = format!(
         "{AUR_HOST}/cgit/aur.git/plain/PKGBUILD?h={}",
@@ -188,14 +189,14 @@ pub fn fetch_remote_pkgbuild(name: &str) -> Result<String> {
     let body = ureq::get(&url)
         .set("User-Agent", USER_AGENT)
         .call()
-        .with_context(|| format!("téléchargement du PKGBUILD de {name}"))?
+        .with_context(|| format!("downloading the PKGBUILD of {name}"))?
         .into_string()
-        .context("lecture du corps PKGBUILD")?;
+        .context("reading the PKGBUILD body")?;
     Ok(body)
 }
 
-/// Tente de localiser le PKGBUILD local (version actuellement installée),
-/// dans le cache du helper. Renvoie son contenu si trouvé.
+/// Tries to locate the local PKGBUILD (currently installed version) in the
+/// helper's cache. Returns its contents if found.
 pub fn local_pkgbuild(name: &str) -> Option<String> {
     let home = dirs::home_dir()?;
     let candidates = [
@@ -210,41 +211,41 @@ pub fn local_pkgbuild(name: &str) -> Option<String> {
     None
 }
 
-/// Construit un diff unifié entre le PKGBUILD local (installé) et le distant.
-/// Si le local est introuvable, renvoie le PKGBUILD distant entier annoté
-/// comme « première inspection ».
+/// Builds a unified diff between the local (installed) PKGBUILD and the remote one.
+/// If the local one cannot be found, returns the entire remote PKGBUILD annotated
+/// as a "first inspection".
 pub fn pkgbuild_diff(name: &str) -> Result<String> {
     let remote = fetch_remote_pkgbuild(name)?;
     match local_pkgbuild(name) {
         Some(local) if local.trim() == remote.trim() => Ok(String::new()),
         Some(local) => Ok(unified_diff(&local, &remote, name)),
         None => Ok(format!(
-            "# Pas de PKGBUILD local de référence — inspection complète du PKGBUILD distant :\n{remote}"
+            "# No local reference PKGBUILD — full inspection of the remote PKGBUILD:\n{remote}"
         )),
     }
 }
 
 // =====================================================================
-// Mode LAG : installer la révision du PKGBUILD qui était la HEAD il y a N
-// jours, via l'historique git du dépôt AUR.
+// LAG mode: install the PKGBUILD revision that was HEAD N days ago, via the
+// AUR repository's git history.
 // =====================================================================
 
-/// Révision « décalée » ciblée par le mode lag.
+/// "Deferred" revision targeted by lag mode.
 #[derive(Debug, Clone)]
 pub struct LagTarget {
     pub pkgbase: String,
     pub commit: String,
-    /// Version (epoch:pkgver-pkgrel) à ce commit, ou "?" si dynamique (VCS).
+    /// Version (epoch:pkgver-pkgrel) at this commit, or "?" if dynamic (VCS).
     pub version: String,
-    /// Horodatage Unix (secondes) du commit cible : permet d'afficher l'âge réel
-    /// de la révision qui sera installée. 0 si la date n'a pas pu être lue.
+    /// Unix timestamp (seconds) of the target commit: lets us show the real age
+    /// of the revision that will be installed. 0 if the date could not be read.
     pub committed_at: u64,
-    /// Contenu du PKGBUILD à ce commit (pour la review).
+    /// PKGBUILD contents at this commit (for the review).
     pub pkgbuild: String,
 }
 
 fn aur_cache_dir() -> Result<PathBuf> {
-    let base = dirs::cache_dir().context("cache dir introuvable")?;
+    let base = dirs::cache_dir().context("cache dir not found")?;
     Ok(base.join("aur-guard").join("git"))
 }
 
@@ -257,7 +258,7 @@ fn run_git(dir: &Path, args: &[&str]) -> Result<String> {
         .with_context(|| format!("git {args:?}"))?;
     if !out.status.success() {
         bail!(
-            "git {:?} : {}",
+            "git {:?}: {}",
             args,
             String::from_utf8_lossy(&out.stderr).trim()
         );
@@ -265,7 +266,7 @@ fn run_git(dir: &Path, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
-/// Clone (ou met à jour) le dépôt git AUR du pkgbase et renvoie son chemin.
+/// Clones (or updates) the pkgbase's AUR git repository and returns its path.
 pub fn ensure_git_repo(pkgbase: &str) -> Result<PathBuf> {
     let dir = aur_cache_dir()?.join(pkgbase);
     if dir.join(".git").exists() {
@@ -280,7 +281,7 @@ pub fn ensure_git_repo(pkgbase: &str) -> Result<PathBuf> {
             .context("git clone")?;
         if !out.status.success() {
             bail!(
-                "clone de {url} : {}",
+                "cloning {url}: {}",
                 String::from_utf8_lossy(&out.stderr).trim()
             );
         }
@@ -288,21 +289,21 @@ pub fn ensure_git_repo(pkgbase: &str) -> Result<PathBuf> {
     Ok(dir)
 }
 
-/// Détermine la révision qui était la HEAD avant `before_epoch`.
+/// Determines the revision that was HEAD before `before_epoch`.
 pub fn lagged_target(pkgbase: &str, before_epoch: u64) -> Result<Option<LagTarget>> {
     let dir = ensure_git_repo(pkgbase)?;
     let before = format!("--before=@{before_epoch}");
-    // origin/HEAD pointe vers la branche par défaut (master sur l'AUR).
+    // origin/HEAD points to the default branch (master on the AUR).
     let commit = run_git(&dir, &["rev-list", "-1", &before, "origin/HEAD"])
         .or_else(|_| run_git(&dir, &["rev-list", "-1", &before, "origin/master"]))?
         .trim()
         .to_string();
     if commit.is_empty() {
-        return Ok(None); // le paquet n'existait pas encore il y a N jours
+        return Ok(None); // the package did not exist yet N days ago
     }
     let pkgbuild = run_git(&dir, &["show", &format!("{commit}:PKGBUILD")]).unwrap_or_default();
     let version = parse_version(&pkgbuild);
-    // Date du commit cible : `%ct` = horodatage Unix du committer.
+    // Target commit date: `%ct` = the committer's Unix timestamp.
     let committed_at = run_git(&dir, &["show", "-s", "--format=%ct", &commit])
         .ok()
         .and_then(|s| s.trim().parse::<u64>().ok())
@@ -316,7 +317,7 @@ pub fn lagged_target(pkgbase: &str, before_epoch: u64) -> Result<Option<LagTarge
     }))
 }
 
-/// Extrait la version d'un PKGBUILD (statique uniquement).
+/// Extracts the version from a PKGBUILD (static only).
 fn parse_version(pkgbuild: &str) -> String {
     let pick = |key: &str| -> String {
         pkgbuild
@@ -327,7 +328,7 @@ fn parse_version(pkgbuild: &str) -> String {
     };
     let ver = pick("pkgver=");
     if ver.is_empty() || ver.contains('$') {
-        return DYNAMIC_VERSION.to_string(); // version dynamique (VCS) : non gérée en lag
+        return DYNAMIC_VERSION.to_string(); // dynamic version (VCS): not handled in lag mode
     }
     let rel = pick("pkgrel=");
     let epoch = pick("epoch=");
@@ -343,8 +344,8 @@ fn parse_version(pkgbuild: &str) -> String {
     }
 }
 
-/// Construit et installe la révision décalée (checkout + makepkg -si).
-/// Retourne true si l'installation a réussi.
+/// Builds and installs the deferred revision (checkout + makepkg -si).
+/// Returns true if the installation succeeded.
 pub fn install_lagged(target: &LagTarget) -> Result<bool> {
     let dir = ensure_git_repo(&target.pkgbase)?;
     run_git(&dir, &["checkout", "--quiet", &target.commit])?;
@@ -352,19 +353,19 @@ pub fn install_lagged(target: &LagTarget) -> Result<bool> {
         .args(["-si", "--noconfirm"])
         .current_dir(&dir)
         .status()
-        .context("lancement de makepkg")?;
-    // Revient sur la branche par défaut pour les prochains fetch.
+        .context("launching makepkg")?;
+    // Return to the default branch for subsequent fetches.
     let _ = run_git(&dir, &["checkout", "--quiet", "origin/HEAD"])
         .or_else(|_| run_git(&dir, &["checkout", "--quiet", "master"]));
     Ok(status.success())
 }
 
-/// Compare deux versions via l'outil `vercmp` de pacman.
-/// Renvoie >0 si `a` est strictement plus récent que `b`, 0 si égal, <0 sinon.
+/// Compares two versions via pacman's `vercmp` tool.
+/// Returns >0 if `a` is strictly more recent than `b`, 0 if equal, <0 otherwise.
 ///
-/// Fail-closed : si `vercmp` est indisponible ou sa sortie illisible, renvoie une
-/// valeur négative — jamais « plus récent ». Aucun appelant ne considère donc une
-/// version comme installable faute de comparaison fiable.
+/// Fail-closed: if `vercmp` is unavailable or its output unreadable, returns a
+/// negative value — never "more recent". No caller therefore treats a version as
+/// installable for lack of a reliable comparison.
 pub fn vercmp(a: &str, b: &str) -> i32 {
     match Command::new("vercmp").args([a, b]).output() {
         Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
@@ -372,43 +373,41 @@ pub fn vercmp(a: &str, b: &str) -> i32 {
             .parse()
             .unwrap_or(-1),
         _ => {
-            eprintln!(
-                "  (vercmp indisponible : comparaison de versions impossible, mise à jour ignorée)"
-            );
+            eprintln!("  (vercmp unavailable: cannot compare versions, update skipped)");
             -1
         }
     }
 }
 
-/// Nombre maximum de commits inspectés en remontant l'historique pour dater la
-/// prochaine révision installable (borne le coût sur un paquet à long historique).
+/// Maximum number of commits inspected while walking back the history to date the
+/// next installable revision (bounds the cost on a package with a long history).
 const MAX_UPGRADE_SCAN: usize = 200;
 
-/// Prochaine révision lag installable : la PLUS ANCIENNE plus récente que la
-/// version installée. C'est elle qui mûrira en premier et sera réellement posée.
+/// Next installable lag revision: the OLDEST one more recent than the installed
+/// version. It is the one that will mature first and actually be installed.
 #[derive(Debug, Clone)]
 pub struct NextUpgrade {
-    /// Date de commit (Unix s) : l'échéance = `committed_at + délai`.
+    /// Commit date (Unix s): the deadline = `committed_at + delay`.
     pub committed_at: u64,
-    /// Version de cette révision (ce qui sera installé à l'échéance).
+    /// Version of this revision (what will be installed at the deadline).
     pub version: String,
 }
 
-/// Prochaine révision strictement plus récente que `installed` dans l'historique
-/// git (la plus ancienne du lot), avec sa date et sa version. `None` si rien
-/// n'est plus récent.
+/// Next revision strictly more recent than `installed` in the git history (the
+/// oldest of the set), with its date and version. `None` if nothing is more
+/// recent.
 ///
-/// Contrairement à `last_modified` (qui suit la *dernière* publication et repart
-/// à zéro à chaque nouveau commit), cette donnée est ancrée sur un commit précis :
-/// une publication ultérieure ne repousse pas une échéance déjà acquise, et la
-/// version annoncée est bien celle qui sera posée. Réutilise le dépôt git déjà
-/// présent (pas de fetch) ; appelée après `lagged_target`.
+/// Unlike `last_modified` (which tracks the *latest* publication and resets to
+/// zero on each new commit), this datum is anchored on a specific commit: a later
+/// publication does not push back an already-acquired deadline, and the announced
+/// version is indeed the one that will be installed. Reuses the already-present
+/// git repository (no fetch); called after `lagged_target`.
 pub fn next_upgrade(pkgbase: &str, installed: &str) -> Result<Option<NextUpgrade>> {
     let dir = aur_cache_dir()?.join(pkgbase);
     if !dir.join(".git").exists() {
         ensure_git_repo(pkgbase)?;
     }
-    // Commits du plus récent au plus ancien, avec leur date de commit (%ct).
+    // Commits from newest to oldest, with their commit date (%ct).
     let log = run_git(&dir, &["log", "--format=%H %ct", "origin/HEAD"])
         .or_else(|_| run_git(&dir, &["log", "--format=%H %ct", "master"]))?;
 
@@ -421,23 +420,23 @@ pub fn next_upgrade(pkgbase: &str, installed: &str) -> Result<Option<NextUpgrade
         let pkgbuild = run_git(&dir, &["show", &format!("{commit}:PKGBUILD")]).unwrap_or_default();
         let version = parse_version(&pkgbuild);
         if version == DYNAMIC_VERSION {
-            continue; // révision VCS : pas de version comparable
+            continue; // VCS revision: no comparable version
         }
         if vercmp(&version, installed) > 0 {
-            // On descend : on retient à chaque fois la révision la plus ancienne.
+            // Walking down: each time we keep the oldest revision so far.
             candidate = ts.parse::<u64>().ok().map(|committed_at| NextUpgrade {
                 committed_at,
                 version,
             });
         } else {
-            break; // on a rejoint la version installée (ou antérieure)
+            break; // we have reached the installed version (or earlier)
         }
     }
     Ok(candidate)
 }
 
-/// Motifs d'exécution de code distant / reverse shell dans un PKGBUILD.
-/// Renvoie les libellés des motifs détectés.
+/// Remote code execution / reverse shell patterns in a PKGBUILD.
+/// Returns the labels of the detected patterns.
 fn danger_signatures(pkgbuild: &str) -> Vec<&'static str> {
     let low = pkgbuild.to_lowercase();
     let compact = low
@@ -445,15 +444,15 @@ fn danger_signatures(pkgbuild: &str) -> Vec<&'static str> {
         .replace("| ", "|")
         .replace(" |", "|");
     let checks: [(&str, &str); 9] = [
-        ("|bash", "pipe vers bash"),
-        ("|sh", "pipe vers sh"),
-        ("base64 -d", "décodage base64"),
-        ("base64 --decode", "décodage base64"),
-        ("/dev/tcp/", "reverse shell /dev/tcp"),
-        ("eval \"$(", "eval de commande"),
-        ("eval $(", "eval de commande"),
-        ("nc -e", "reverse shell netcat"),
-        ("curl -s http", "téléchargement opaque curl"),
+        ("|bash", "pipe to bash"),
+        ("|sh", "pipe to sh"),
+        ("base64 -d", "base64 decode"),
+        ("base64 --decode", "base64 decode"),
+        ("/dev/tcp/", "/dev/tcp reverse shell"),
+        ("eval \"$(", "command eval"),
+        ("eval $(", "command eval"),
+        ("nc -e", "netcat reverse shell"),
+        ("curl -s http", "opaque curl download"),
     ];
     let mut hits = Vec::new();
     for (pat, label) in checks {
@@ -464,13 +463,13 @@ fn danger_signatures(pkgbuild: &str) -> Vec<&'static str> {
     hits
 }
 
-/// Garde anti-« version vérolée restée dans l'historique » : la révision cible
-/// a-t-elle été annulée/nettoyée depuis ? Renvoie Some(raison) si suspect.
+/// Guard against a "poisoned version left in the history": has the target
+/// revision been reverted/cleaned since? Returns Some(reason) if suspicious.
 ///
-/// Deux signaux :
-///   A. un commit postérieur à `commit` mentionne une compromission ;
-///   B. un motif d'exécution dangereux présent dans la révision cible a
-///      disparu de la HEAD actuelle (signe d'un nettoyage post-incident).
+/// Two signals:
+///   A. a commit after `commit` mentions a compromise;
+///   B. a dangerous execution pattern present in the target revision has
+///      disappeared from the current HEAD (a sign of post-incident cleanup).
 pub fn reverted_since(pkgbase: &str, commit: &str) -> Result<Option<String>> {
     let dir = aur_cache_dir()?.join(pkgbase);
     if !dir.join(".git").exists() {
@@ -481,7 +480,7 @@ pub fn reverted_since(pkgbase: &str, commit: &str) -> Result<Option<String>> {
         .or_else(|_| run_git(&dir, &["show", "master:PKGBUILD"]))
         .unwrap_or_default();
 
-    // B. motif dangereux retiré depuis (signal fort, peu de faux positifs).
+    // B. dangerous pattern removed since (strong signal, few false positives).
     let target_sigs = danger_signatures(&target);
     if !target_sigs.is_empty() {
         let head_sigs = danger_signatures(&head);
@@ -490,14 +489,14 @@ pub fn reverted_since(pkgbase: &str, commit: &str) -> Result<Option<String>> {
             .filter(|s| !head_sigs.contains(s))
             .collect();
         if !removed.is_empty() {
-            return Ok(Some(format!(
-                "motif dangereux présent dans la révision cible mais retiré depuis : {}",
+            return Ok(Some(t!(
+                "dangerous pattern present in the target revision but removed since: {}",
                 removed.join(", ")
             )));
         }
     }
 
-    // A. message d'un commit postérieur évoquant une compromission.
+    // A. message of a later commit hinting at a compromise.
     let log = run_git(
         &dir,
         &["log", "--format=%s %b", &format!("{commit}..origin/HEAD")],
@@ -520,27 +519,27 @@ pub fn reverted_since(pkgbase: &str, commit: &str) -> Result<Option<String>> {
         "exfiltr",
     ];
     if let Some(kw) = MAL.iter().find(|k| low.contains(**k)) {
-        return Ok(Some(format!("un commit postérieur mentionne « {kw} »")));
+        return Ok(Some(t!("a later commit mentions “{}”", kw)));
     }
 
     Ok(None)
 }
 
-/// Diff unifié entre le PKGBUILD installé et un nouveau contenu donné.
+/// Unified diff between the installed PKGBUILD and a given new content.
 pub fn diff_against_installed(name: &str, new_pkgbuild: &str) -> String {
     match local_pkgbuild(name) {
         Some(local) if local.trim() == new_pkgbuild.trim() => String::new(),
         Some(local) => unified_diff(&local, new_pkgbuild, name),
-        None => format!("# Pas de référence locale — inspection complète :\n{new_pkgbuild}"),
+        None => format!("# No local reference — full inspection:\n{new_pkgbuild}"),
     }
 }
 
-/// Diff unifié maison (sans dépendance externe) : suffisant pour donner du
-/// contexte à l'IA et à l'utilisateur.
+/// In-house unified diff (no external dependency): enough to give context to
+/// the AI and the user.
 fn unified_diff(old: &str, new: &str, name: &str) -> String {
     let old_lines: Vec<&str> = old.lines().collect();
     let new_lines: Vec<&str> = new.lines().collect();
-    let mut out = format!("--- {name} (installé)\n+++ {name} (AUR)\n");
+    let mut out = format!("--- {name} (installed)\n+++ {name} (AUR)\n");
     let max = old_lines.len().max(new_lines.len());
     for i in 0..max {
         let o = old_lines.get(i);
@@ -563,37 +562,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn version_statique_est_extraite() {
+    fn static_version_is_extracted() {
         let pk = "pkgname=x\npkgver=1.2.3\npkgrel=2\n";
         assert_eq!(parse_version(pk), "1.2.3-2");
     }
 
     #[test]
-    fn version_avec_epoch() {
+    fn version_with_epoch() {
         let pk = "pkgver=1.0\npkgrel=1\nepoch=2\n";
         assert_eq!(parse_version(pk), "2:1.0-1");
     }
 
     #[test]
-    fn version_dynamique_vcs_non_geree() {
+    fn dynamic_vcs_version_not_handled() {
         let pk = "pkgver=r1234.$(git rev-parse)\npkgrel=1\n";
         assert_eq!(parse_version(pk), DYNAMIC_VERSION);
     }
 
     #[test]
-    fn motif_pipe_bash_detecte() {
+    fn pipe_bash_pattern_detected() {
         let pk = "package(){ curl -fsSL https://x | bash; }";
-        assert!(danger_signatures(pk).contains(&"pipe vers bash"));
+        assert!(danger_signatures(pk).contains(&"pipe to bash"));
     }
 
     #[test]
-    fn pkgbuild_propre_sans_signature() {
+    fn clean_pkgbuild_has_no_signature() {
         let pk = "package(){ install -Dm755 app \"$pkgdir/usr/bin/app\"; }";
         assert!(danger_signatures(pk).is_empty());
     }
 
     #[test]
-    fn urlencode_gere_les_caracteres_speciaux() {
+    fn urlencode_handles_special_characters() {
         assert_eq!(urlencode("c++-gtk"), "c%2B%2B-gtk");
         assert_eq!(urlencode("simple-bin"), "simple-bin");
     }

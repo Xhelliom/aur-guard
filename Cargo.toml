@@ -2,7 +2,7 @@
 name = "aur-guard"
 version = "0.2.0"
 edition = "2021"
-description = "Garde-fou de sécurité pour les mises à jour AUR : délai, whitelist, scan statique et review IA du diff PKGBUILD"
+description = "Security gate for AUR updates: delay, whitelist, static scan and AI review of the PKGBUILD diff"
 license = "MIT"
 repository = "https://github.com/Xhelliom/aur-guard"
 

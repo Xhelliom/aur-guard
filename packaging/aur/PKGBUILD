@@ -2,15 +2,15 @@
 pkgname=aur-guard
 pkgver=0.2.0
 pkgrel=1
-pkgdesc="Garde-fou de sécurité pour les mises à jour AUR : délai, whitelist, scan statique et review IA du diff PKGBUILD"
+pkgdesc="Security gate for AUR updates: delay, whitelist, static scan and AI review of the PKGBUILD diff"
 arch=('x86_64' 'aarch64')
 url="https://github.com/Xhelliom/aur-guard"
 license=('MIT')
-# gtk4 + libadwaita servent au binaire aur-guard-gui (compilé par défaut)
+# gtk4 + libadwaita are used by the aur-guard-gui binary (built by default)
 depends=('gtk4' 'libadwaita' 'gcc-libs' 'glibc')
 makedepends=('cargo' 'gettext')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-# Remplacé par updpkgsums une fois le tag v$pkgver publié (le CI le fait tout seul).
+# Replaced by updpkgsums once the v$pkgver tag is published (CI does it automatically).
 sha256sums=('SKIP')
 
 prepare() {
@@ -23,7 +23,7 @@ build() {
   cd "$pkgname-$pkgver"
   export RUSTUP_TOOLCHAIN=stable
   export CARGO_TARGET_DIR=target
-  # features par défaut = tui + gui → produit aur-guard ET aur-guard-gui
+  # default features = tui + gui → produces both aur-guard AND aur-guard-gui
   cargo build --frozen --release
 }
 
@@ -38,7 +38,7 @@ package() {
   install -Dm644 data/fr.xhelliom.AurGuard.svg \
     "$pkgdir/usr/share/icons/hicolor/scalable/apps/fr.xhelliom.AurGuard.svg"
 
-  # Catalogues de traduction — domaine gettext "aur-guard" (cf. po/install.sh).
+  # Translation catalogs — gettext domain "aur-guard" (see po/install.sh).
   for po in po/*.po; do
     lang="$(basename "$po" .po)"
     install -dm755 "$pkgdir/usr/share/locale/$lang/LC_MESSAGES"

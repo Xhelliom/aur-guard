@@ -1,7 +1,7 @@
-//! Interface graphique GTK4 / libadwaita pour aur-guard.
+//! GTK4 / libadwaita graphical interface for aur-guard.
 //!
-//! Vue principale : les mises à jour AUR (vérification + verdicts + apply).
-//! Les réglages vivent dans un dialogue séparé (bouton engrenage).
+//! Main view: the AUR updates (check + verdicts + apply).
+//! The settings live in a separate dialog (gear button).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -18,25 +18,25 @@ use aur_guard::{aur, deploy, t};
 
 const APP_ID: &str = "fr.xhelliom.AurGuard";
 
-/// Couleur RGB (0..1) d'un segment de la barre de répartition / d'une pastille.
+/// RGB color (0..1) of a distribution-bar segment / a swatch.
 type Rgb = (f64, f64, f64);
 
-/// Hauteur de la barre de répartition (px).
+/// Height of the distribution bar (px).
 const BAR_HEIGHT: i32 = 18;
-/// Côté d'une pastille de légende (px).
+/// Side of a legend swatch (px).
 const SWATCH_SIZE: i32 = 12;
 
-// Palette des catégories : alignée sur les couleurs sémantiques d'Adwaita
-// (accent/vert/bleu/orange/rouge) pour rester lisible en thème clair et sombre.
-const COLOR_OFFICIAL: Rgb = (0.38, 0.49, 0.55); // ardoise — dépôts signés
-const COLOR_ALLOW: Rgb = (0.18, 0.76, 0.49); // vert — installé en dernière version
-const COLOR_LAG: Rgb = (0.20, 0.56, 0.85); // bleu — installé en révision décalée
-const COLOR_DELAY: Rgb = (0.96, 0.55, 0.06); // orange — retardé
-const COLOR_BLOCK: Rgb = (0.88, 0.11, 0.14); // rouge — bloqué
+// Category palette: aligned with Adwaita's semantic colors
+// (accent/green/blue/orange/red) to stay readable in light and dark themes.
+const COLOR_OFFICIAL: Rgb = (0.38, 0.49, 0.55); // slate — signed repos
+const COLOR_ALLOW: Rgb = (0.18, 0.76, 0.49); // green — installed at latest version
+const COLOR_LAG: Rgb = (0.20, 0.56, 0.85); // blue — installed at deferred revision
+const COLOR_DELAY: Rgb = (0.96, 0.55, 0.06); // orange — delayed
+const COLOR_BLOCK: Rgb = (0.88, 0.11, 0.14); // red — blocked
 
-/// Styles des badges de statut : pilules colorées. On s'appuie sur les couleurs
-/// nommées de libadwaita (`@success_color`…) pour rester lisibles en thème clair
-/// comme sombre, sans coder de teinte en dur.
+/// Status badge styles: colored pills. We rely on libadwaita's named colors
+/// (`@success_color`…) to stay readable in light and dark themes, without
+/// hard-coding any hue.
 const BADGE_CSS: &str = "\
 .ag-badge { border-radius: 12px; padding: 1px 9px; font-weight: bold; }
 .ag-badge.ag-ok   { background-color: alpha(@success_color, 0.15); color: @success_color; }
@@ -76,7 +76,7 @@ fn provider_name(p: Provider) -> &'static str {
 }
 
 // =====================================================================
-// Fenêtre principale : MISES À JOUR
+// Main window: UPDATES
 // =====================================================================
 
 fn build_ui(app: &adw::Application) {
@@ -135,8 +135,8 @@ fn build_ui(app: &adw::Application) {
     btn_box.append(&upgrade_btn);
     updates.set_header_suffix(Some(&btn_box));
 
-    // Cases à cocher des paquets « autorisés » (nom, widget) : remplie par la
-    // vérification, lue par la mise à jour sélective.
+    // Checkboxes for the "allowed" packages (name, widget): filled by the
+    // check, read by the selective update.
     let selected: Rc<RefCell<Vec<(String, gtk::CheckButton)>>> = Rc::new(RefCell::new(Vec::new()));
 
     let results = gtk::ListBox::builder()
@@ -146,7 +146,7 @@ fn build_ui(app: &adw::Application) {
     results.append(&info_row(&t!("Click “Check” to run the analysis.")));
     updates.add(&results);
 
-    // Tableau de bord (KPI + barre de répartition), rempli par la vérification.
+    // Dashboard (KPIs + distribution bar), filled by the check.
     let dashboard = gtk::Box::builder()
         .orientation(Orientation::Vertical)
         .spacing(12)
@@ -162,8 +162,8 @@ fn build_ui(app: &adw::Application) {
         .build();
     toolbar.set_content(Some(&scroller));
 
-    // Pile de navigation : « mises à jour » à la racine ; les réglages sont
-    // poussés comme une page plein écran (et non un dialogue flottant).
+    // Navigation stack: "updates" at the root; the settings are pushed as a
+    // full-screen page (rather than a floating dialog).
     let updates_page = adw::NavigationPage::new(&toolbar, "aur-guard");
     let nav = adw::NavigationView::new();
     nav.add(&updates_page);
@@ -172,7 +172,7 @@ fn build_ui(app: &adw::Application) {
     overlay.set_child(Some(&nav));
     window.set_content(Some(&overlay));
 
-    // Bouton engrenage -> page de paramètres plein écran.
+    // Gear button -> full-screen settings page.
     {
         let cfg = cfg.clone();
         let nav = nav.clone();
@@ -190,13 +190,13 @@ fn build_ui(app: &adw::Application) {
 
     window.present();
 
-    // Rafraîchissement automatique au démarrage : on déclenche la même
-    // vérification que le bouton, sans dupliquer sa logique.
+    // Automatic refresh at startup: we trigger the same check as the button,
+    // without duplicating its logic.
     check_btn.emit_clicked();
 }
 
-/// Branche le bouton « Vérifier » : évaluation en arrière-plan puis affichage,
-/// avec en tête un rappel du nombre de maj des dépôts officiels (signées).
+/// Wires the "Check" button: background evaluation then display, with a reminder
+/// of the number of (signed) official-repo updates at the top.
 fn wire_check(
     cfg: &Rc<RefCell<Config>>,
     check_btn: &gtk::Button,
@@ -258,9 +258,9 @@ fn wire_check(
     });
 }
 
-/// Peuple le tableau de bord (KPI + barre) et les listes repliables à partir des
-/// verdicts. Toute la décision est déjà prise par `pipeline` ; on ne fait que
-/// présenter et regrouper.
+/// Populates the dashboard (KPIs + bar) and the collapsible lists from the
+/// verdicts. All the decision-making is already done by `pipeline`; we only
+/// present and group.
 fn render(
     cfg: &Config,
     dashboard: &gtk::Box,
@@ -284,7 +284,7 @@ fn render(
     dashboard.append(&kpi_row(official.len(), &summary));
     dashboard.append(&distribution_bar(official, outcomes, &summary));
 
-    // Bloqués en premier (le plus important), dépliés.
+    // Blocked first (the most important), expanded.
     let blocked: Vec<&Outcome> = outcomes
         .iter()
         .filter(|o| matches!(o.decision, Decision::Blocked(_)))
@@ -302,7 +302,7 @@ fn render(
         results.append(&exp);
     }
 
-    // À installer, dépliés, avec cases à cocher (sélection = restriction).
+    // To install, expanded, with checkboxes (selection = restriction).
     let allowed: Vec<&Outcome> = outcomes
         .iter()
         .filter(|o| o.decision == Decision::Allow)
@@ -321,7 +321,7 @@ fn render(
         results.append(&exp);
     }
 
-    // Retardés et dépôts officiels : repliés par défaut (informatif).
+    // Delayed and official repos: collapsed by default (informational).
     let delayed: Vec<&Outcome> = outcomes
         .iter()
         .filter(|o| matches!(o.decision, Decision::Delayed(_)))
@@ -355,10 +355,10 @@ fn render(
     apply_btn.set_sensitive(!selected.borrow().is_empty());
 }
 
-/// Branche le bouton « Mettre à jour la sélection » : lance `aur-guard apply`
-/// (paquets AUR uniquement, sans toucher aux dépôts officiels) restreint aux
-/// paquets cochés. Le CLI réévalue la chaîne de décision à l'installation : la
-/// sélection ne contourne aucune garde, elle ne fait que restreindre.
+/// Wires the "Update selection" button: runs `aur-guard apply` (AUR packages
+/// only, without touching the official repos) restricted to the checked
+/// packages. The CLI re-evaluates the decision chain at install time: the
+/// selection bypasses no guard, it only narrows.
 fn wire_apply(
     apply_btn: &gtk::Button,
     selected: &Rc<RefCell<Vec<(String, gtk::CheckButton)>>>,
@@ -386,8 +386,8 @@ fn wire_apply(
     });
 }
 
-/// Branche le bouton « Tout mettre à jour » : lance `aur-guard upgrade` dans un
-/// terminal (dépôts officiels via pacman -Syu puis paquets AUR sûrs).
+/// Wires the "Update everything" button: runs `aur-guard upgrade` in a terminal
+/// (official repos via pacman -Syu then safe AUR packages).
 fn wire_upgrade(upgrade_btn: &gtk::Button, overlay: &adw::ToastOverlay) {
     let overlay = overlay.clone();
     upgrade_btn.connect_clicked(move |_| {
@@ -398,7 +398,7 @@ fn wire_upgrade(upgrade_btn: &gtk::Button, overlay: &adw::ToastOverlay) {
 }
 
 // =====================================================================
-// Dialogue de PARAMÈTRES
+// SETTINGS dialog
 // =====================================================================
 
 fn build_settings_page(
@@ -480,7 +480,7 @@ fn build_settings_page(
         .build();
     refresh_key_row(&key_row, provider_from_index(provider_row.selected()));
     {
-        // Met à jour le libellé de la clé quand le provider change.
+        // Update the key label when the provider changes.
         let key_row = key_row.clone();
         provider_row.connect_selected_notify(move |row| {
             refresh_key_row(&key_row, provider_from_index(row.selected()));
@@ -531,7 +531,7 @@ fn build_settings_page(
     notif.add(&silent_row);
     notif.add(&test_row);
 
-    // --- Groupe Whitelist ---
+    // --- Whitelist group ---
     let wl = build_whitelist_group(cfg);
 
     page.add(&general);
@@ -545,7 +545,7 @@ fn build_settings_page(
     toolbar.set_content(Some(&page));
     let nav_page = adw::NavigationPage::new(&toolbar, &t!("Settings"));
 
-    // Sauvegarde quand on quitte la page de réglages (retour à l'accueil).
+    // Save when leaving the settings page (back to home).
     {
         let cfg = cfg.clone();
         let overlay = overlay.clone();
@@ -575,7 +575,7 @@ fn build_settings_page(
                 c.notify.silent_when_up_to_date = silent_row.is_active();
             }
 
-            // La clé saisie (si non vide) va dans le fichier de secrets 0600.
+            // The typed key (if non-empty) goes into the 0600 secrets file.
             let typed = key_row.text().to_string();
             if !typed.trim().is_empty() {
                 let mut secrets = Secrets::load();
@@ -592,7 +592,7 @@ fn build_settings_page(
             toast.set_timeout(2);
             overlay.add_toast(toast);
 
-            // Synchronise le timer systemd de notification avec les réglages.
+            // Sync the notification systemd timer with the settings.
             if let Err(e) = deploy::apply_notify(&cfg.borrow().notify) {
                 overlay.add_toast(adw::Toast::new(&t!("Notification setup error: {}", e)));
             }
@@ -602,8 +602,8 @@ fn build_settings_page(
     nav_page
 }
 
-/// Met le libellé de la ligne de clé API à jour selon le provider, en indiquant
-/// si une clé est déjà disponible (env ou secrets). Ne pré-remplit jamais la clé.
+/// Updates the API key row's label depending on the provider, indicating whether
+/// a key is already available (env or secrets). Never pre-fills the key.
 fn refresh_key_row(key_row: &adw::PasswordEntryRow, provider: Provider) {
     let env_set = std::env::var(provider.default_key_env())
         .map(|v| !v.is_empty())
@@ -619,8 +619,8 @@ fn refresh_key_row(key_row: &adw::PasswordEntryRow, provider: Provider) {
     key_row.set_title(&t!("{} API key — {}", provider_name(provider), state));
 }
 
-/// Groupe d'édition de la whitelist : paquets actuels (suppression) + champ
-/// d'ajout + suggestions (paquets AUR installés non encore whitelistés).
+/// Whitelist editing group: current packages (removal) + add field + suggestions
+/// (installed AUR packages not yet whitelisted).
 fn build_whitelist_group(cfg: &Rc<RefCell<Config>>) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::builder()
         .title(t!("Whitelist"))
@@ -653,7 +653,7 @@ fn build_whitelist_group(cfg: &Rc<RefCell<Config>>) -> adw::PreferencesGroup {
     }
     group.add(&wl_expander);
 
-    // Suggestions : paquets AUR installés absents de la whitelist.
+    // Suggestions: installed AUR packages not in the whitelist.
     let suggestions: Vec<String> = aur::installed_aur_packages()
         .into_iter()
         .filter(|p| !cfg.borrow().is_whitelisted(p))
@@ -676,10 +676,10 @@ fn build_whitelist_group(cfg: &Rc<RefCell<Config>>) -> adw::PreferencesGroup {
 }
 
 // =====================================================================
-// Helpers de widgets
+// Widget helpers
 // =====================================================================
 
-/// Ajoute un paquet à la whitelist si nouveau. Retourne true si ajouté.
+/// Adds a package to the whitelist if new. Returns true if added.
 fn add_to_whitelist(cfg: &Rc<RefCell<Config>>, name: &str) -> bool {
     if name.is_empty() || cfg.borrow().is_whitelisted(name) {
         return false;
@@ -690,7 +690,7 @@ fn add_to_whitelist(cfg: &Rc<RefCell<Config>>, name: &str) -> bool {
     true
 }
 
-/// Ligne de paquet whitelisté avec un bouton de suppression.
+/// Whitelisted package row with a removal button.
 fn make_pkg_row(
     name: &str,
     cfg: &Rc<RefCell<Config>>,
@@ -716,7 +716,7 @@ fn make_pkg_row(
     row
 }
 
-/// Ligne de suggestion : un bouton « + » l'ajoute à la whitelist et la déplace.
+/// Suggestion row: a "+" button adds it to the whitelist and moves it.
 fn make_suggestion_row(
     name: &str,
     cfg: &Rc<RefCell<Config>>,
@@ -763,10 +763,10 @@ fn clear_box(b: &gtk::Box) {
 }
 
 // =====================================================================
-// Tableau de bord : KPI + barre de répartition
+// Dashboard: KPIs + distribution bar
 // =====================================================================
 
-/// Rangée de cartes KPI résumant ce qui va (ou non) être mis à jour.
+/// Row of KPI cards summarising what will (or won't) be updated.
 fn kpi_row(official: usize, summary: &pipeline::Summary) -> gtk::Box {
     let row = gtk::Box::builder()
         .orientation(Orientation::Horizontal)
@@ -780,8 +780,8 @@ fn kpi_row(official: usize, summary: &pipeline::Summary) -> gtk::Box {
     row
 }
 
-/// Une carte KPI : grand nombre coloré + libellé. `accent` est une classe de
-/// style sémantique Adwaita (accent/success/warning/error).
+/// A KPI card: large colored number + label. `accent` is an Adwaita semantic
+/// style class (accent/success/warning/error).
 fn kpi_card(value: usize, label: &str, accent: &str) -> gtk::Box {
     let card = gtk::Box::builder()
         .orientation(Orientation::Vertical)
@@ -808,21 +808,21 @@ fn kpi_card(value: usize, label: &str, accent: &str) -> gtk::Box {
     card
 }
 
-/// Catégorie de la barre de répartition : libellé, effectif, couleur.
+/// A distribution-bar category: label, count, color.
 struct Segment {
     label: String,
     count: usize,
     color: Rgb,
 }
 
-/// Barre horizontale segmentée (proportionnelle aux effectifs) + sa légende.
-/// Visualise d'un coup d'œil officiels / à installer / décalés / retardés / bloqués.
+/// Horizontal segmented bar (proportional to the counts) + its legend.
+/// Visualizes at a glance official / to install / deferred / delayed / blocked.
 fn distribution_bar(
     official: &[String],
     outcomes: &[Outcome],
     summary: &pipeline::Summary,
 ) -> gtk::Box {
-    // Au sein des « autorisés », distingue dernière version et révision décalée.
+    // Within the "allowed", distinguish latest version from deferred revision.
     let lagged = outcomes
         .iter()
         .filter(|o| o.decision == Decision::Allow && o.lag.is_some())
@@ -876,7 +876,7 @@ fn distribution_bar(
         let (w, h) = (width as f64, height as f64);
         let mut x = 0.0;
         for (i, (count, color)) in drawn.iter().enumerate() {
-            // Le dernier segment va jusqu'au bord pour absorber les arrondis.
+            // The last segment runs to the edge to absorb rounding errors.
             let seg_w = if i + 1 == drawn.len() {
                 w - x
             } else {
@@ -890,7 +890,7 @@ fn distribution_bar(
     });
     container.append(&bar);
 
-    // Légende : une pastille par catégorie non vide.
+    // Legend: one swatch per non-empty category.
     let legend = gtk::Box::builder()
         .orientation(Orientation::Horizontal)
         .spacing(14)
@@ -904,7 +904,7 @@ fn distribution_bar(
     container
 }
 
-/// Une entrée de légende : pastille colorée + « libellé effectif ».
+/// A legend entry: colored swatch + "label count".
 fn legend_item(seg: &Segment) -> gtk::Box {
     let item = gtk::Box::builder()
         .orientation(Orientation::Horizontal)
@@ -930,7 +930,7 @@ fn legend_item(seg: &Segment) -> gtk::Box {
     item
 }
 
-/// Ligne repliable groupant des paquets d'une même catégorie (titre + compteur).
+/// Collapsible row grouping packages of the same category (title + counter).
 fn group_expander(title: &str, count: usize, expanded: bool, icon: &str) -> adw::ExpanderRow {
     let exp = adw::ExpanderRow::builder()
         .title(title)
@@ -945,7 +945,7 @@ fn info_row(text: &str) -> adw::ActionRow {
     adw::ActionRow::builder().title(text).build()
 }
 
-/// Enregistre la feuille de style des badges pour tout l'affichage (une fois).
+/// Registers the badge stylesheet for the whole display (once).
 fn install_css() {
     let provider = gtk::CssProvider::new();
     provider.load_from_data(BADGE_CSS);
@@ -958,7 +958,7 @@ fn install_css() {
     }
 }
 
-/// Pilule de statut colorée : `variant` = classe CSS (`ag-ok`/`ag-warn`/`ag-err`).
+/// Colored status pill: `variant` = CSS class (`ag-ok`/`ag-warn`/`ag-err`).
 fn badge(text: &str, variant: &str) -> gtk::Label {
     gtk::Label::builder()
         .label(text)
@@ -967,9 +967,9 @@ fn badge(text: &str, variant: &str) -> gtk::Label {
         .build()
 }
 
-/// Ligne « rien à faire » : confirme que tout est à jour ET, en sous-titre,
-/// rappelle la politique de maturation — pour qu'un nouvel utilisateur comprenne
-/// que de futures maj seront proposées plus tard, pas absentes.
+/// "Nothing to do" row: confirms everything is up to date AND, in the subtitle,
+/// recalls the maturation policy — so a new user understands that future updates
+/// will be offered later, not that they are absent.
 fn up_to_date_row(cfg: &Config) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
         .title(t!("Everything is up to date."))
@@ -986,13 +986,13 @@ fn up_to_date_row(cfg: &Config) -> adw::ActionRow {
             ),
         };
         row.set_subtitle(&policy);
-        row.set_subtitle_lines(0); // pas de troncature : le rappel doit se lire en entier
+        row.set_subtitle_lines(0); // no truncation: the reminder must be read in full
     }
     row.add_prefix(&gtk::Image::from_icon_name("emblem-ok-symbolic"));
     row
 }
 
-/// Formate un horodatage Unix en date locale courte (via glib, sans dépendance).
+/// Formats a Unix timestamp as a short local date (via glib, no dependency).
 fn format_date(ts: u64) -> String {
     glib::DateTime::from_unix_local(ts as i64)
         .and_then(|d| d.format("%x"))
@@ -1000,8 +1000,8 @@ fn format_date(ts: u64) -> String {
         .unwrap_or_default()
 }
 
-/// Libellé de l'âge de la révision décalée ciblée (date du commit cible).
-/// `committed_at == 0` signifie date illisible : on le signale plutôt que mentir.
+/// Label for the age of the targeted deferred revision (target commit date).
+/// `committed_at == 0` means the date is unreadable: we say so rather than lie.
 fn lag_age_label(target: &aur::LagTarget) -> String {
     if target.committed_at == 0 {
         return t!("revision age unknown");
@@ -1010,7 +1010,7 @@ fn lag_age_label(target: &aur::LagTarget) -> String {
     t!("revision {}d old", age)
 }
 
-/// Libellé de la dernière version publiée et de son ancienneté.
+/// Label of the latest published version and its age.
 fn latest_label(o: &Outcome) -> String {
     match o.age_days {
         Some(w) => t!("latest {} published {}d ago", o.update.new_ver, w),
@@ -1018,7 +1018,7 @@ fn latest_label(o: &Outcome) -> String {
     }
 }
 
-/// Version cible d'un paquet autorisé : la révision lag installée, sinon la dernière.
+/// Target version of an allowed package: the installed lag revision, otherwise the latest.
 fn allow_target(o: &Outcome) -> String {
     match &o.lag {
         Some(t) => t.version.clone(),
@@ -1027,7 +1027,7 @@ fn allow_target(o: &Outcome) -> String {
     }
 }
 
-/// Version qui sera réellement posée à l'échéance d'un paquet en attente.
+/// Version that will actually be installed at the deadline of a pending package.
 fn delayed_target(o: &Outcome) -> String {
     o.eligible_version
         .as_deref()
@@ -1042,8 +1042,8 @@ fn delayed_target(o: &Outcome) -> String {
         })
 }
 
-/// Sous-titre (détails secondaires) d'un paquet autorisé : version actuelle, âge
-/// de la révision lag, et dernière version publiée si elle diffère de l'installée.
+/// Subtitle (secondary details) of an allowed package: current version, age of
+/// the lag revision, and latest published version if it differs from the installed one.
 fn allow_detail(o: &Outcome) -> String {
     let mut parts = Vec::new();
     if !o.update.old_ver.is_empty() {
@@ -1061,8 +1061,8 @@ fn allow_detail(o: &Outcome) -> String {
     parts.join("  ·  ")
 }
 
-/// Sous-titre (détails secondaires) d'un paquet en attente : date d'arrivée,
-/// version actuelle, et dernière version publiée si elle diffère de la cible.
+/// Subtitle (secondary details) of a pending package: availability date,
+/// current version, and latest published version if it differs from the target.
 fn delayed_detail(o: &Outcome, days_since_mod: u64, now: u64) -> String {
     let mut parts = Vec::new();
     if let Some(ts) = o.eligible_at {
@@ -1084,7 +1084,7 @@ fn delayed_detail(o: &Outcome, days_since_mod: u64, now: u64) -> String {
     parts.join("  ·  ")
 }
 
-/// Badge de compte à rebours d'un paquet en attente (« ~N j », orange).
+/// Countdown badge of a pending package ("~N d", orange).
 fn delayed_badge(o: &Outcome, now: u64) -> gtk::Label {
     match o.eligible_at {
         Some(ts) if ts > now => {
@@ -1095,14 +1095,14 @@ fn delayed_badge(o: &Outcome, now: u64) -> gtk::Label {
     }
 }
 
-/// Ligne d'un verdict : titre = « paquet → version cible » (bien visible), badge
-/// de statut coloré à droite, détails grisés en sous-titre. Couleur du badge +
-/// titre = « quelle version, quel statut » saisis d'un coup d'œil.
+/// A verdict row: title = "package → target version" (clearly visible), colored
+/// status badge on the right, greyed-out details in the subtitle. Badge color +
+/// title = "which version, which status" grasped at a glance.
 fn outcome_row(o: &Outcome) -> adw::ActionRow {
     let now = aur::now_secs();
     let row = adw::ActionRow::builder().build();
-    row.set_use_markup(false); // versions/raisons littérales (pas d'échappement requis)
-    row.set_subtitle_lines(0); // détails parfois longs : ne pas tronquer
+    row.set_use_markup(false); // literal versions/reasons (no escaping required)
+    row.set_subtitle_lines(0); // sometimes long details: do not truncate
     let icon = match &o.decision {
         Decision::Allow => {
             row.set_title(&format!("{} → {}", o.update.name, allow_target(o)));
@@ -1127,14 +1127,14 @@ fn outcome_row(o: &Outcome) -> adw::ActionRow {
     row
 }
 
-/// Entoure une chaîne de quotes simples pour l'injecter sans risque dans une
-/// ligne `bash -c` (chemins comportant des espaces). Les quotes simples internes
-/// sont échappées via la séquence `'\''`.
+/// Wraps a string in single quotes to inject it safely into a `bash -c` line
+/// (paths containing spaces). Internal single quotes are escaped via the `'\''`
+/// sequence.
 fn sh_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-/// Tente de lancer une commande dans un émulateur de terminal courant.
+/// Tries to launch a command in a common terminal emulator.
 fn launch_in_terminal(cmd: &str) -> std::io::Result<()> {
     let full = format!("{cmd}; echo; read -p '{}'", t!("Press Enter to close…"));
     let candidates: [(&str, Vec<&str>); 4] = [
